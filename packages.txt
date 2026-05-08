@@ -9,3 +9,4 @@ libxdamage1
 libxrandr2
 libgbm1
 libasound2
+libglib2.0-0t64
