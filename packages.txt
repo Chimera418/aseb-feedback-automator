@@ -10,3 +10,9 @@ libxrandr2
 libgbm1
 libasound2
 libglib2.0-0t64
+libxfixes3
+libxext6
+libxrender1
+libxtst6
+libxcb1
+libx11-xcb1
