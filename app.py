@@ -7,7 +7,11 @@ import time
 import os
 
 # Ensure Playwright browsers are installed (essential for Streamlit Cloud deployment)
-os.system("playwright install chromium")
+@st.cache_resource
+def install_playwright():
+    os.system("playwright install chromium")
+
+install_playwright()
 
 import tlp
 import course
