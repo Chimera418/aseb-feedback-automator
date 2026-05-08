@@ -4,6 +4,11 @@ import asyncio
 import logging
 import queue
 import time
+import os
+
+# Ensure Playwright browsers are installed (essential for Streamlit Cloud deployment)
+os.system("playwright install chromium")
+
 import tlp
 import course
 
