@@ -20,12 +20,15 @@ import time
 import builtins
 import logging
 
+os.makedirs("logs", exist_ok=True)
+os.makedirs("images", exist_ok=True)
+
 # --- Setup Logging ---
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler("course_feedback_bot.log", encoding="utf-8"),
+        logging.FileHandler("logs/course_feedback_bot.log", encoding="utf-8"),
         logging.StreamHandler()
     ]
 )
@@ -98,7 +101,7 @@ async def login_to_microsoft(page: Page, email: str, password: str) -> None:
             logger.info("... 'Stay signed in' prompt not found, proceeding.")
     except Exception as e:
         logger.info(f"❌ Error during Microsoft login: {e}")
-        await page.screenshot(path="course_login_error.png")
+        await page.screenshot(path="images/course_login_error.png")
         raise
 
 # --- Helper: Outlook OTP Fetch ---
@@ -157,7 +160,7 @@ async def fetch_otp_from_outlook(context: BrowserContext, email: str, password: 
         except Exception as e:
             logger.info(f"❌ Error during OTP fetch (Attempt {attempt}): {e}")
             if outlook_page:
-                await outlook_page.screenshot(path="course_outlook_error.png")
+                await outlook_page.screenshot(path="images/course_outlook_error.png")
                 await outlook_page.close()
             if attempt < MAX_OTP_ATTEMPTS:
                 logger.info("...Retrying in 5 seconds.")
@@ -203,7 +206,7 @@ async def verify_otp(page: Page, context: BrowserContext, email: str, password: 
             
     except Exception as e:
         logger.info(f"❌ Error during OTP verification: {e}")
-        await page.screenshot(path="course_otp_error.png")
+        await page.screenshot(path="images/course_otp_error.png")
         raise
 
 # --- Core Logic: Fill Feedback ---
@@ -367,7 +370,7 @@ async def verify_finish(page: Page) -> None:
 
     except Exception as e:
         logger.info(f"❌ Error during final verification: {e}")
-        await page.screenshot(path="course_verify_error.png")
+        await page.screenshot(path="images/course_verify_error.png")
         raise
 
 # --- Main Orchestrator ---
@@ -510,7 +513,7 @@ async def run(email=None, password=None, answer_idx=None, headless=None, progres
                     logger.info(f"--- ⚠️ FAILED TO SUBMIT SUBJECT {subject_num} ({href}) ---")
                     logger.info(f"Error: {e}")
                     logger.info("This feedback will be skipped. Check error screenshots.")
-                    await feedback_page.screenshot(path=f"course_failure_subject_{subject_num}.png")
+                    await feedback_page.screenshot(path=f"images/course_failure_subject_{subject_num}.png")
                     
                     if progress_callback:
                         progress_callback("subject_failed", info)
@@ -524,7 +527,7 @@ async def run(email=None, password=None, answer_idx=None, headless=None, progres
         except Exception as e:
             logger.info(f"--- ❌ A FATAL ERROR OCCURRED ---")
             logger.info(f"Error: {e}")
-            await page.screenshot(path="course_fatal_error.png")
+            await page.screenshot(path="images/course_fatal_error.png")
 
         finally:
             await browser.close()

@@ -1,9 +1,14 @@
+import os
+os.makedirs("logs", exist_ok=True)
+os.makedirs("images", exist_ok=True)
+
 import tkinter as tk
 from tkinter import ttk, messagebox
 import threading
 import asyncio
 import logging
 import queue
+import pygame
 import tlp  # our main script
 import course  # course feedback script
 
@@ -33,6 +38,26 @@ class FeedbackGUI:
         
         self.create_widgets()
         self.setup_logging()
+        self.setup_audio()
+
+    def setup_audio(self):
+        try:
+            pygame.mixer.init()
+            audio_file = os.path.join("misc", "Furinkazan -Tsuki Sayu Yoru-.mp3")
+            if os.path.exists(audio_file):
+                pygame.mixer.music.load(audio_file)
+                pygame.mixer.music.set_volume(0.5)
+                pygame.mixer.music.play(loops=-1)
+            else:
+                tlp.logger.warning(f"Audio file not found: {audio_file}")
+        except Exception as e:
+            tlp.logger.error(f"Failed to initialize audio: {e}")
+
+    def change_volume(self, val):
+        try:
+            pygame.mixer.music.set_volume(float(val))
+        except:
+            pass
 
     def setup_logging(self):
         text_handler = TextHandler(self.log_text)
@@ -74,7 +99,15 @@ class FeedbackGUI:
         ttk.Radiobutton(mode_frame, text="Course Feedback", variable=self.mode_var, value="course").pack(side=tk.LEFT)
         
         self.fetch_btn = ttk.Button(input_frame, text="🔍 Fetch Subjects", command=self.start_fetching)
-        self.fetch_btn.grid(row=0, column=2, rowspan=4, padx=20, ipadx=10, ipady=10)
+        self.fetch_btn.grid(row=0, column=2, rowspan=5, padx=20, ipadx=10, ipady=10)
+
+        # --- Audio Frame ---
+        audio_frame = ttk.Frame(input_frame)
+        audio_frame.grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=5)
+        
+        ttk.Label(audio_frame, text="Volume:").pack(side=tk.LEFT, padx=(0, 10))
+        self.volume_scale = ttk.Scale(audio_frame, from_=0, to=1, orient=tk.HORIZONTAL, value=0.5, command=self.change_volume)
+        self.volume_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # --- Middle Frame: Dynamic Subjects List ---
         list_frame = ttk.LabelFrame(self.root, text="Step 2: Assign Ratings", padding=(10, 10))

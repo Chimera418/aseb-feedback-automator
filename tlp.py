@@ -25,17 +25,19 @@ import re
 import os
 import getpass
 from playwright.async_api import async_playwright, Page, BrowserContext, Locator
-from typing import List, Optional
 import time
 import builtins
 import logging
+
+os.makedirs("logs", exist_ok=True)
+os.makedirs("images", exist_ok=True)
 
 # --- Setup Logging ---
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler("feedback_bot.log", encoding="utf-8"),
+        logging.FileHandler("logs/feedback_bot.log", encoding="utf-8"),
         logging.StreamHandler()
     ]
 )
@@ -126,7 +128,7 @@ async def login_to_microsoft(page: Page, email: str, password: str) -> None:
 
     except Exception as e:
         logger.info(f"❌ Error during Microsoft login: {e}")
-        await page.screenshot(path="login_error.png")
+        await page.screenshot(path="images/login_error.png")
         raise
 
 # --- Helper: Outlook OTP Fetch ---
@@ -207,7 +209,7 @@ async def fetch_otp_from_outlook(context: BrowserContext, email: str, password: 
         except Exception as e:
             logger.info(f"❌ Error during OTP fetch (Attempt {attempt}): {e}")
             if outlook_page:
-                await outlook_page.screenshot(path="outlook_error.png")
+                await outlook_page.screenshot(path="images/outlook_error.png")
                 await outlook_page.close()
             if attempt < MAX_OTP_ATTEMPTS:
                 logger.info("...Retrying in 5 seconds.")
@@ -444,7 +446,7 @@ async def verify_finish(page: Page, context: BrowserContext, email: str, passwor
 
     except Exception as e:
         logger.info(f"❌ Error during final verification: {e}")
-        await page.screenshot(path="verify_error.png")
+        await page.screenshot(path="images/verify_error.png")
         raise
 
 # --- Main Orchestrator ---
@@ -620,7 +622,7 @@ async def run(email=None, password=None, answer_idx=None, headless=None, progres
                     logger.info(f"--- ⚠️ FAILED TO SUBMIT SUBJECT {subject_num} ({href}) ---")
                     logger.info(f"Error: {e}")
                     logger.info("This feedback will be skipped. Check error screenshots.")
-                    await feedback_page.screenshot(path=f"failure_subject_{subject_num}.png")
+                    await feedback_page.screenshot(path=f"images/failure_subject_{subject_num}.png")
                     
                     if progress_callback:
                         progress_callback("subject_failed", info)
@@ -634,7 +636,7 @@ async def run(email=None, password=None, answer_idx=None, headless=None, progres
         except Exception as e:
             logger.info(f"--- ❌ A FATAL ERROR OCCURRED ---")
             logger.info(f"Error: {e}")
-            await page.screenshot(path="fatal_error.png")
+            await page.screenshot(path="images/fatal_error.png")
 
         finally:
             await browser.close()
