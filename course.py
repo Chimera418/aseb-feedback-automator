@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 """
-Amrita Student Portal (AUMS) Course Feedback Automation Script
+MyAmrita Student Portal Course Feedback Automation Script
 
 This script automates the "Course Feedback" process from end-to-end.
 The workflow for Course Feedback is slightly different from TLP Feedback:
@@ -376,7 +376,7 @@ async def run(email=None, password=None, answer_idx=None, headless=None, progres
     final_answer_idx = answer_idx if answer_idx is not None else ANSWER_OPTION_INDEX
     final_headless = headless if headless is not None else HEADLESS
 
-    logger.info("--- Amrita Course Feedback Bot ---")
+    logger.info("--- MyAmrita Course Feedback Bot ---")
     logger.info(f"Email: {final_email}")
     logger.info(f"Headless Mode: {final_headless}")
     logger.info(f"Answer Index: {final_answer_idx} (0=Excellent)")
@@ -384,7 +384,7 @@ async def run(email=None, password=None, answer_idx=None, headless=None, progres
     final_password = password
     if not final_password:
         try:
-            final_password = getpass.getpass("Enter your password (used for Amrita and Outlook): ")
+            final_password = getpass.getpass("Enter your password (used for MyAmrita and Outlook): ")
         except Exception as e:
             logger.info(f"❌ Could not read password: {e}")
             return

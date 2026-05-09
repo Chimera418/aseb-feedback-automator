@@ -1,9 +1,9 @@
-# 🎓 Amrita Feedback Automater
+# 🎓 MyAmrita Feedback Automater
 
 ## 💖 Credits
 * **[@Shaenpai24](https://github.com/Shaenpai24)**: The entire project was his original idea, and he developed the initial basic script that laid the foundation for this automater.
 
-An automated, end-to-end tool to handle the tedious process of submitting TLP and Course feedbacks on the Amrita Student Portal. 
+An automated, end-to-end tool to handle the tedious process of submitting TLP and Course feedbacks on the MyAmrita Student Portal. 
 
 This project uses **Playwright** for browser automation to navigate the student portal, handle OTP verifications through Outlook, and fill out feedback forms based on user-defined ratings. It includes both a **Tkinter** desktop GUI and a **Streamlit** web app interface.
 
@@ -66,14 +66,18 @@ python gui.py
 ```
 
 ## 🧠 How it Works
-1. **Login & Fetch**: You provide your Amrita email and password. The bot logs into the portal and scrapes your dashboard to find all subjects that currently have a "Pending" feedback status.
+1. **Login & Fetch**: You provide your MyAmrita email and password. The bot logs into the portal and scrapes your dashboard to find all subjects that currently have a "Pending" feedback status.
 2. **Assign Ratings**: The UI presents a list of pending subjects. You can choose a custom rating for each one.
 3. **Submit**: Once you click submit, the bot iterates through each subject.
    - For **Course Feedback**, it clicks "Send OTP", logs into your Outlook, reads the OTP, and enters it.
    - It then loops through every question, selects the radio button corresponding to your chosen rating, and clicks "Save & Next" until the form is complete.
    - Finally, it handles the Javascript confirmation alert and clicks "Finish".
 ## ⚠️ Disclaimer
-This tool is built for educational purposes to demonstrate browser automation, DOM traversal, and asynchronous Python programming. Use it responsibly and ensure you comply with your university's IT policies.
+
+> [!IMPORTANT]
+> **Why this exists:** Made this because manually doing feedback was a pain in the ass.
+> 
+> **Reliability:** It might not work sometimes because the MyAmrita website is so unstable and constantly hits 504 errors.
 
 <div align="center">
   <img src="https://media.tenor.com/2XyX9r36G_MAAAAC/cat-dance.gif" alt="Dancing Cat" width="200"/>

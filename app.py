@@ -18,7 +18,7 @@ import course
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Amrita Feedback Automater",
+    page_title="MyAmrita Feedback Automater",
     page_icon="🎓",
     layout="wide",
 )
@@ -303,8 +303,8 @@ drain_queue()
 # Header
 st.markdown("""
 <div class="app-header">
-    <h1>🎓 Amrita Feedback Automater</h1>
-    <p>Automate TLP &amp; Course feedback submissions for the Amrita Student Portal</p>
+    <h1>🎓 MyAmrita Feedback Automater</h1>
+    <p>Automate TLP &amp; Course feedback submissions for the MyAmrita Student Portal</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -313,7 +313,7 @@ st.markdown('<div class="card"><div class="card-title">Step 1 — Login &amp; Fe
 
 col1, col2, col3 = st.columns([3, 3, 2])
 with col1:
-    email = st.text_input("Amrita Email", value=tlp.OUTLOOK_EMAIL, key="email_input",
+    email = st.text_input("MyAmrita Email", value=tlp.OUTLOOK_EMAIL, key="email_input",
                           placeholder="you@bl.students.amrita.edu")
 with col2:
     password = st.text_input("Password", type="password", key="password_input",

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 """
-Amrita Student Portal (AUMS) TLP Feedback Automation Script
+MyAmrita Student Portal TLP Feedback Automation Script
 
 This script automates the "Class TLP Feedback" process from end-to-end.
 It is hardened against the portal's unstable DOM, slow loads, and
@@ -13,7 +13,7 @@ multi-step finish/OTP process (including fetching the OTP from Outlook),
 and safely skips any subject that fails, continuing with the rest.
 
 Run with:
-    python3 amrita_feedback_bot.py
+    python3 tlp.py
 
 Required:
     pip install playwright
@@ -459,7 +459,7 @@ async def run(email=None, password=None, answer_idx=None, headless=None, progres
     final_answer_idx = answer_idx if answer_idx is not None else ANSWER_OPTION_INDEX
     final_headless = headless if headless is not None else HEADLESS
 
-    logger.info("--- Amrita TLP Feedback Bot ---")
+    logger.info("--- MyAmrita TLP Feedback Bot ---")
     logger.info(f"Email: {final_email}")
     logger.info(f"Headless Mode: {final_headless}")
     logger.info(f"Answer Index: {final_answer_idx} (0=Excellent)")
@@ -467,7 +467,7 @@ async def run(email=None, password=None, answer_idx=None, headless=None, progres
     final_password = password
     if not final_password:
         try:
-            final_password = getpass.getpass("Enter your password (used for Amrita and Outlook): ")
+            final_password = getpass.getpass("Enter your password (used for MyAmrita and Outlook): ")
         except Exception as e:
             logger.info(f"❌ Could not read password: {e}")
             return

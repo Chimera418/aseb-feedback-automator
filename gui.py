@@ -24,7 +24,7 @@ class TextHandler(logging.Handler):
 class FeedbackGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Amrita TLP Feedback Automater")
+        self.root.title("MyAmrita TLP Feedback Automater")
         self.root.geometry("850x650")
         
         self.ui_queue = queue.Queue()
