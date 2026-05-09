@@ -1,5 +1,8 @@
 # 🎓 Amrita Feedback Automater
 
+## 💖 Credits
+* **[@Shaenpai24](https://github.com/Shaenpai24)**: The entire project was his original idea, and he developed the initial basic script that laid the foundation for this automater.
+
 An automated, end-to-end tool to handle the tedious process of submitting TLP and Course feedbacks on the Amrita Student Portal. 
 
 This project uses **Playwright** for browser automation to navigate the student portal, handle OTP verifications through Outlook, and fill out feedback forms based on user-defined ratings. It includes both a **Tkinter** desktop GUI and a **Streamlit** web app interface.
@@ -69,6 +72,9 @@ python gui.py
    - For **Course Feedback**, it clicks "Send OTP", logs into your Outlook, reads the OTP, and enters it.
    - It then loops through every question, selects the radio button corresponding to your chosen rating, and clicks "Save & Next" until the form is complete.
    - Finally, it handles the Javascript confirmation alert and clicks "Finish".
-
 ## ⚠️ Disclaimer
 This tool is built for educational purposes to demonstrate browser automation, DOM traversal, and asynchronous Python programming. Use it responsibly and ensure you comply with your university's IT policies.
+
+<div align="center">
+  <img src="https://media.tenor.com/2XyX9r36G_MAAAAC/cat-dance.gif" alt="Dancing Cat" width="200"/>
+</div>
