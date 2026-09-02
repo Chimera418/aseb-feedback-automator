@@ -15,6 +15,7 @@ install_playwright()
 
 import tlp
 import course
+import vidya
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -182,7 +183,7 @@ class QueueHandler(logging.Handler):
 _log_q = st.session_state["ui_queue"]
 
 # Remove any stale QueueHandlers (added by previous reruns), then attach one fresh one
-for _lgr in (tlp.logger, course.logger):
+for _lgr in (tlp.logger, course.logger, vidya.logger):
     # Use class name check because 'isinstance' fails after Streamlit reloads the module
     _lgr.handlers = [h for h in _lgr.handlers if h.__class__.__name__ != "QueueHandler"]
     _h = QueueHandler(_log_q)
@@ -196,7 +197,7 @@ def run_asyncio_loop(email, password, default_idx, mode, ui_queue, user_config_q
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        module_to_run = tlp if mode == "tlp" else course
+        module_to_run = {"tlp": tlp, "course": course, "vidya": vidya}[mode]
         loop.run_until_complete(
             module_to_run.run(
                 email=email,
@@ -311,32 +312,45 @@ st.markdown("""
 # ── Step 1 ─────────────────────────────────────────────────────────────────────
 st.markdown('<div class="card"><div class="card-title">Step 1 — Login &amp; Fetch</div>', unsafe_allow_html=True)
 
+MODES = {
+    "TLP Feedback": "tlp",
+    "Course Feedback": "course",
+    "AmritaVidya Feedback": "vidya",
+}
+
+mode = st.radio("Feedback Mode", list(MODES.keys()), horizontal=True, key="mode_radio")
+mode_key = MODES[mode]
+is_vidya = mode_key == "vidya"
+
 col1, col2, col3 = st.columns([3, 3, 2])
 with col1:
-    email = st.text_input("MyAmrita Email", value=tlp.OUTLOOK_EMAIL, key="email_input",
-                          placeholder="you@bl.students.amrita.edu")
+    email = st.text_input(
+        "AmritaVidya Username" if is_vidya else "MyAmrita Email",
+        value=vidya.VIDYA_USERNAME if is_vidya else tlp.OUTLOOK_EMAIL,
+        key=f"email_input_{mode_key}",
+        placeholder="bl.sc.u4aieXXXXX" if is_vidya else "you@bl.students.amrita.edu",
+    )
 with col2:
-    password = st.text_input("Password", type="password", key="password_input",
-                             placeholder="Your Microsoft password")
+    password = st.text_input(
+        "Password",
+        type="password",
+        key=f"password_input_{mode_key}",
+        placeholder="Leave blank to use the default" if is_vidya else "Your Microsoft password",
+    )
 with col3:
     default_rating = st.selectbox("Default Rating", RATING_OPTIONS, index=1, key="default_rating")
 
-col4, col5 = st.columns([3, 2])
-with col4:
-    mode = st.radio("Feedback Mode", ["TLP Feedback", "Course Feedback"],
-                    horizontal=True, key="mode_radio")
-with col5:
-    fetch_clicked = st.button(
-        "🔍 Fetch Subjects",
-        disabled=st.session_state["running"],
-        key="fetch_btn"
-    )
+fetch_clicked = st.button(
+    "🔍 Fetch Subjects",
+    disabled=st.session_state["running"],
+    key="fetch_btn"
+)
 
 st.markdown("</div>", unsafe_allow_html=True)
 
 # Fetch handler
 if fetch_clicked:
-    if not email or not password:
+    if not email or (not password and not is_vidya):
         st.error("Please enter both Email and Password.")
     else:
         st.session_state["subjects"]         = []
@@ -346,7 +360,6 @@ if fetch_clicked:
         st.session_state["running"]          = True
         st.session_state["user_config_queue"] = queue.Queue()
 
-        mode_key = "tlp" if mode == "TLP Feedback" else "course"
         default_idx = parse_rating(default_rating)
 
         # Capture queues as local vars — threads cannot access st.session_state

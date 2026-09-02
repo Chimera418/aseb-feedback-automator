@@ -11,6 +11,7 @@ import queue
 import pygame
 import tlp  # our main script
 import course  # course feedback script
+import vidya  # amritavidya (web-blr) feedback script
 
 class TextHandler(logging.Handler):
     def __init__(self, text_widget):
@@ -67,13 +68,16 @@ class FeedbackGUI:
         tlp.logger.setLevel(logging.INFO)
         course.logger.addHandler(text_handler)
         course.logger.setLevel(logging.INFO)
+        vidya.logger.addHandler(text_handler)
+        vidya.logger.setLevel(logging.INFO)
 
     def create_widgets(self):
         # --- Top Frame: Credentials ---
         input_frame = ttk.LabelFrame(self.root, text="Step 1: Login & Fetch", padding=(10, 10))
         input_frame.pack(fill=tk.X, padx=10, pady=5)
 
-        ttk.Label(input_frame, text="Amrita Email:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        self.email_label = ttk.Label(input_frame, text="Amrita Email:")
+        self.email_label.grid(row=0, column=0, sticky=tk.W, pady=2)
         self.email_var = tk.StringVar(value=tlp.OUTLOOK_EMAIL)
         self.email_entry = ttk.Entry(input_frame, textvariable=self.email_var, width=40)
         self.email_entry.grid(row=0, column=1, sticky=tk.W, pady=2, padx=5)
@@ -95,9 +99,13 @@ class FeedbackGUI:
         mode_frame.grid(row=3, column=1, sticky=tk.W, pady=2)
         
         self.mode_var = tk.StringVar(value="tlp")
-        ttk.Radiobutton(mode_frame, text="TLP Feedback", variable=self.mode_var, value="tlp").pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Radiobutton(mode_frame, text="Course Feedback", variable=self.mode_var, value="course").pack(side=tk.LEFT)
-        
+        ttk.Radiobutton(mode_frame, text="TLP Feedback", variable=self.mode_var, value="tlp",
+                        command=self.on_mode_change).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Radiobutton(mode_frame, text="Course Feedback", variable=self.mode_var, value="course",
+                        command=self.on_mode_change).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Radiobutton(mode_frame, text="AmritaVidya Feedback", variable=self.mode_var, value="vidya",
+                        command=self.on_mode_change).pack(side=tk.LEFT)
+
         self.fetch_btn = ttk.Button(input_frame, text="🔍 Fetch Subjects", command=self.start_fetching)
         self.fetch_btn.grid(row=0, column=2, rowspan=5, padx=20, ipadx=10, ipady=10)
 
@@ -142,6 +150,14 @@ class FeedbackGUI:
         self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         log_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
+    def on_mode_change(self):
+        if self.mode_var.get() == "vidya":
+            self.email_label.config(text="Vidya Username:")
+            self.email_var.set(vidya.VIDYA_USERNAME)
+        else:
+            self.email_label.config(text="Amrita Email:")
+            self.email_var.set(tlp.OUTLOOK_EMAIL)
+
     def parse_rating(self, rating_str):
         try:
             return int(rating_str.split('(')[1].split(')')[0])
@@ -153,7 +169,8 @@ class FeedbackGUI:
         password = self.password_var.get()
         default_rating_idx = self.parse_rating(self.rating_var.get())
 
-        if not email or not password:
+        mode = self.mode_var.get()
+        if not email or (not password and mode != "vidya"):
             messagebox.showerror("Missing Info", "Please enter both Email and Password.")
             return
 
@@ -164,7 +181,6 @@ class FeedbackGUI:
             widget.destroy()
         self.subject_widgets.clear()
         
-        mode = self.mode_var.get()
         tlp.logger.info(f"GUI: Starting background browser thread ({mode.upper()} Mode) to fetch subjects...")
 
         thread = threading.Thread(
@@ -180,7 +196,7 @@ class FeedbackGUI:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            module_to_run = tlp if mode == "tlp" else course
+            module_to_run = {"tlp": tlp, "course": course, "vidya": vidya}[mode]
             loop.run_until_complete(
                 module_to_run.run(
                     email=email,

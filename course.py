@@ -75,6 +75,39 @@ SEL = {
     "form_otp_validate": "button:has-text('Validate'), button:has-text('Submit'), button:has-text('Verify'), button[name='otp_ver']"
 }
 
+# --- Helper: Safe Goto with Retries for 504/Timeouts ---
+async def safe_goto(page: Page, url: str, timeout: int = 120000, wait_until: str = "load", max_retries: int = 3) -> None:
+    """Navigates to a URL with built-in retries for 504 Gateway Timeouts and network errors."""
+    for attempt in range(1, max_retries + 1):
+        try:
+            logger.info(f"🔗 Navigating to {url} (Attempt {attempt}/{max_retries})")
+            response = await page.goto(url, timeout=timeout, wait_until=wait_until)
+            
+            # Check for Bad Gateway / Gateway Timeout HTTP status
+            if response and response.status in [502, 503, 504]:
+                logger.warning(f"⚠️ Server returned HTTP {response.status}. Retrying in 10 seconds...")
+                await asyncio.sleep(10)
+                continue
+                
+            # Check if the page content itself indicates a 504 (sometimes load balancers do this with 200 OK)
+            try:
+                page_text = await page.content()
+                if "504 Gateway Time-out" in page_text or "504 Gateway Timeout" in page_text or "502 Bad Gateway" in page_text:
+                    logger.warning(f"⚠️ Page content indicates 504/502 error. Retrying in 10 seconds...")
+                    await asyncio.sleep(10)
+                    continue
+            except Exception:
+                pass
+                
+            # If we get here, it seems successful
+            return
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Navigation failed: {e}. Retrying in 10 seconds...")
+            if attempt == max_retries:
+                raise RuntimeError(f"Failed to load {url} after {max_retries} attempts. Last error: {e}")
+            await asyncio.sleep(10)
+
 # --- Helper: Microsoft Login ---
 async def login_to_microsoft(page: Page, email: str, password: str) -> None:
     try:
@@ -112,7 +145,7 @@ async def fetch_otp_from_outlook(context: BrowserContext, email: str, password: 
         outlook_page = None
         try:
             outlook_page = await context.new_page()
-            await outlook_page.goto(OUTLOOK_URL, timeout=120000)
+            await safe_goto(outlook_page, OUTLOOK_URL, timeout=120000)
             inbox_selector = SEL["outlook_inbox"]
 
             try:
@@ -399,7 +432,7 @@ async def run(email=None, password=None, answer_idx=None, headless=None, progres
 
         try:
             logger.info(f"🔗 Opening Student Portal Dashboard: {DASHBOARD_URL}")
-            await page.goto(DASHBOARD_URL, timeout=120000)
+            await safe_goto(page, DASHBOARD_URL, timeout=120000)
             login_indicator = SEL["portal_login_indicator"]
 
             try:
@@ -420,8 +453,8 @@ async def run(email=None, password=None, answer_idx=None, headless=None, progres
                 logger.info("✅ Student Portal login successful.")
 
             logger.info(f"🔗 Navigating to feedback list: {FEEDBACK_URL}")
-            await page.goto(FEEDBACK_URL)
-            await page.wait_for_selector(SEL["portal_table"])
+            await safe_goto(page, FEEDBACK_URL)
+            await page.wait_for_selector(SEL["portal_table"], timeout=30000)
             logger.info("...Feedback list page loaded.")
 
             pending_feedbacks = []
@@ -492,7 +525,7 @@ async def run(email=None, password=None, answer_idx=None, headless=None, progres
                 feedback_page = await context.new_page()
 
                 try:
-                    await feedback_page.goto(href, timeout=60000, wait_until="domcontentloaded")
+                    await safe_goto(feedback_page, href, timeout=60000, wait_until="domcontentloaded")
 
                     subject_idx = user_config.get(info, final_answer_idx)
                     
