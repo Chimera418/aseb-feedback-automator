@@ -28,6 +28,7 @@ from playwright.async_api import async_playwright, Page, BrowserContext, Locator
 import time
 import builtins
 import logging
+import runctx
 
 os.makedirs("logs", exist_ok=True)
 os.makedirs("images", exist_ok=True)
@@ -90,6 +91,48 @@ SEL = {
     "form_otp_input": "input[placeholder*='OTP' i], input[name*='otp' i]",
     "form_otp_validate": "button:has-text('Validate')"
 }
+
+# --- Helper: Fetch Student Name from Portal ---
+
+async def fetch_student_name(page: Page) -> str:
+    """
+    Tries to extract the logged-in student's name from the portal dashboard.
+    Attempts several common selectors used by the MyAmrita portal and falls
+    back gracefully to 'Student' if none match.
+    """
+    CANDIDATE_SELECTORS = [
+        ".student-name",
+        ".user-name",
+        ".profile-name",
+        "span.user-name",
+        "a.user-profile",
+        "li.nav-user",
+        ".navbar-user",
+        "[class*='user'] [class*='name']",
+        "[class*='student'][class*='name']",
+    ]
+    for sel in CANDIDATE_SELECTORS:
+        try:
+            el = page.locator(sel).first
+            if await el.count() > 0 and await el.is_visible(timeout=2000):
+                name = (await el.inner_text()).strip()
+                if name:
+                    return name
+        except Exception:
+            continue
+
+    # Fallback: try to read any navbar text that looks like a proper name
+    try:
+        nav_texts = await page.locator("nav .nav-item, header .nav-item, .navbar-nav .nav-link").all_inner_texts()
+        for text in nav_texts:
+            text = text.strip()
+            # A proper name is 2-4 words, all letters (possibly with spaces/dots)
+            if 2 <= len(text.split()) <= 5 and all(w.replace('.', '').isalpha() for w in text.split()):
+                return text
+    except Exception:
+        pass
+
+    return "Student"
 
 # --- Helper: Safe Goto with Retries for 504/Timeouts ---
 async def safe_goto(page: Page, url: str, timeout: int = 120000, wait_until: str = "load", max_retries: int = 3) -> None:
@@ -161,7 +204,7 @@ async def login_to_microsoft(page: Page, email: str, password: str) -> None:
 
     except Exception as e:
         logger.info(f"❌ Error during Microsoft login: {e}")
-        await page.screenshot(path="images/login_error.png")
+        await page.screenshot(path=runctx.shot("login_error.png"))
         raise
 
 # --- Helper: Outlook OTP Fetch ---
@@ -242,7 +285,7 @@ async def fetch_otp_from_outlook(context: BrowserContext, email: str, password: 
         except Exception as e:
             logger.info(f"❌ Error during OTP fetch (Attempt {attempt}): {e}")
             if outlook_page:
-                await outlook_page.screenshot(path="images/outlook_error.png")
+                await outlook_page.screenshot(path=runctx.shot("outlook_error.png"))
                 await outlook_page.close()
             if attempt < MAX_OTP_ATTEMPTS:
                 logger.info("...Retrying in 5 seconds.")
@@ -479,7 +522,7 @@ async def verify_finish(page: Page, context: BrowserContext, email: str, passwor
 
     except Exception as e:
         logger.info(f"❌ Error during final verification: {e}")
-        await page.screenshot(path="images/verify_error.png")
+        await page.screenshot(path=runctx.shot("verify_error.png"))
         raise
 
 # --- Main Orchestrator ---
@@ -549,6 +592,12 @@ async def run(email=None, password=None, answer_idx=None, headless=None, progres
                 await page.wait_for_selector(login_indicator, timeout=60000)
                 logger.info("✅ Student Portal login successful.")
                 # --- END OF NEW LOGIN LOGIC ---
+
+            # Fetch and emit student name
+            student_name = await fetch_student_name(page)
+            logger.info(f"👤 Logged in as: {student_name}")
+            if progress_callback:
+                progress_callback("student_name", student_name)
 
             # 2. Navigate to TLP Feedback list and find pending
             logger.info(f"🔗 Navigating to feedback list: {FEEDBACK_URL}")
@@ -628,6 +677,16 @@ async def run(email=None, password=None, answer_idx=None, headless=None, progres
 
             # 3. Process each pending feedback in a new page
             for idx, item in enumerate(pending_feedbacks):
+                if user_config_queue and not user_config_queue.empty():
+                    try:
+                        msg = user_config_queue.get_nowait()
+                        if msg == 'CANCEL':
+                            logger.info('🚫 Automation cancelled by user.')
+                            break
+                        else:
+                            user_config_queue.put_nowait(msg)
+                    except Exception:
+                        pass
                 subject_num = idx + 1
                 href = item["url"]
                 info = item["info"]
@@ -655,7 +714,7 @@ async def run(email=None, password=None, answer_idx=None, headless=None, progres
                     logger.info(f"--- ⚠️ FAILED TO SUBMIT SUBJECT {subject_num} ({href}) ---")
                     logger.info(f"Error: {e}")
                     logger.info("This feedback will be skipped. Check error screenshots.")
-                    await feedback_page.screenshot(path=f"images/failure_subject_{subject_num}.png")
+                    await feedback_page.screenshot(path=runctx.shot(f"failure_subject_{subject_num}.png"))
                     
                     if progress_callback:
                         progress_callback("subject_failed", info)
@@ -669,7 +728,7 @@ async def run(email=None, password=None, answer_idx=None, headless=None, progres
         except Exception as e:
             logger.info(f"--- ❌ A FATAL ERROR OCCURRED ---")
             logger.info(f"Error: {e}")
-            await page.screenshot(path="images/fatal_error.png")
+            await page.screenshot(path=runctx.shot("fatal_error.png"))
 
         finally:
             await browser.close()
