@@ -39,9 +39,35 @@ VIDYA_PASSWORD = os.environ.get("VIDYA_PASSWORD", "amma")
 HEADLESS = os.environ.get("HEADLESS", "true").lower() in ["true", "1"]
 DRY_RUN = os.environ.get("DRY_RUN", "false").lower() in ["true", "1"]
 
-BASE_URL = "http://web-blr.amrita.edu/amritavidya/"
+DEFAULT_HOST = os.environ.get("VIDYA_HOST", "210.212.205.26").strip()
+BASE_URL = f"http://{DEFAULT_HOST}/amritavidya/"
 LOGIN_URL = BASE_URL + "main_login.php"
 FEEDBACK_URL = BASE_URL + "feedback_home.php"
+
+
+def set_target_host(host_or_ip: str) -> str:
+    """
+    Dynamically switch portal target to domain name or direct IP:
+      - '210.212.205.26' (Default Public Direct IP)
+      - 'web-blr.amrita.edu' (Campus Domain)
+      - '192.168.2.26' (Campus Wi-Fi Intranet IP)
+    """
+    global BASE_URL, LOGIN_URL, FEEDBACK_URL
+    clean = host_or_ip.strip()
+    if not clean:
+        clean = "210.212.205.26"
+    if clean.startswith("http://") or clean.startswith("https://"):
+        if not clean.endswith("/"):
+            clean += "/"
+        if not clean.endswith("amritavidya/"):
+            clean += "amritavidya/"
+        BASE_URL = clean
+    else:
+        BASE_URL = f"http://{clean}/amritavidya/"
+    LOGIN_URL = BASE_URL + "main_login.php"
+    FEEDBACK_URL = BASE_URL + "feedback_home.php"
+    logger.info(f"🌐 AmritaVidya endpoint configured: {BASE_URL}")
+    return BASE_URL
 
 CHROMIUM_ARGS = [
     "--no-sandbox",
@@ -99,18 +125,26 @@ async def fetch_student_name(page: Page) -> str:
 
 
 async def safe_goto(page: Page, url: str, timeout: int = 30000, max_retries: int = 3) -> None:
+    current_url = url
     for attempt in range(1, max_retries + 1):
         try:
-            logger.info(f"🔗 Navigating to {url} (Attempt {attempt}/{max_retries})")
-            await page.goto(url, timeout=timeout, wait_until="domcontentloaded")
+            logger.info(f"🔗 Navigating to {current_url} (Attempt {attempt}/{max_retries})")
+            await page.goto(current_url, timeout=timeout, wait_until="domcontentloaded")
             return
         except Exception as e:
             err_str = str(e)
             logger.warning(f"⚠️ Navigation failed: {err_str}")
+            if attempt == 1:
+                if "web-blr.amrita.edu" in current_url:
+                    current_url = current_url.replace("web-blr.amrita.edu", "210.212.205.26")
+                    logger.info(f"🔄 Switching to direct public IP: {current_url}")
+                elif "210.212.205.26" in current_url:
+                    current_url = current_url.replace("210.212.205.26", "web-blr.amrita.edu")
+                    logger.info(f"🔄 Switching to domain: {current_url}")
             if "ERR_CONNECTION_TIMED_OUT" in err_str or "Timeout" in err_str:
                 logger.warning("💡 Tip: The Amrita campus portal firewall blocks foreign/cloud datacenter IPs (like Streamlit Cloud/AWS) and some VPNs. Run the app locally on home/campus Wi-Fi without VPN.")
             if attempt == max_retries:
-                raise RuntimeError(f"Failed to load {url} after {max_retries} attempts. Last error: {e}")
+                raise RuntimeError(f"Failed to load {current_url} after {max_retries} attempts. Last error: {e}")
             await asyncio.sleep(3)
 
 
@@ -264,7 +298,20 @@ async def verify_submitted(page: Page, code: str) -> None:
     logger.info(f"✅ Feedback submitted and confirmed for {code}.")
 
 
-async def run(email=None, password=None, answer_idx=None, headless=None, progress_callback=None, user_config_queue=None, dry_run=None) -> None:
+async def run(
+    email=None,
+    password=None,
+    answer_idx=None,
+    headless=None,
+    progress_callback=None,
+    user_config_queue=None,
+    dry_run=None,
+    target_host=None,
+    proxy=None,
+) -> None:
+    if target_host:
+        set_target_host(target_host)
+
     username = (email or VIDYA_USERNAME).strip()
     final_password = password or VIDYA_PASSWORD
     final_answer_idx = answer_idx if answer_idx is not None else ANSWER_OPTION_INDEX
@@ -272,17 +319,26 @@ async def run(email=None, password=None, answer_idx=None, headless=None, progres
     final_dry_run = dry_run if dry_run is not None else DRY_RUN
 
     logger.info("--- AmritaVidya Student Feedback Bot ---")
+    logger.info(f"Target Portal: {BASE_URL}")
     logger.info(f"Username: {username}")
     logger.info(f"Headless Mode: {final_headless}")
     logger.info(f"Answer Scheme: {final_answer_idx}")
     if final_dry_run:
         logger.info("🧪 DRY RUN enabled — forms will be filled but never submitted.")
 
+    eff_proxy = proxy or os.environ.get("HTTP_PROXY") or os.environ.get("ALL_PROXY")
+    if eff_proxy:
+        logger.info(f"🌐 Using Outbound Proxy: {eff_proxy}")
+
     if not final_password:
         final_password = getpass.getpass("Enter your AmritaVidya password: ")
 
+    launch_opts = {"headless": final_headless, "args": CHROMIUM_ARGS}
+    if eff_proxy:
+        launch_opts["proxy"] = {"server": eff_proxy}
+
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=final_headless, args=CHROMIUM_ARGS)
+        browser = await p.chromium.launch(**launch_opts)
         context = await browser.new_context()
         page = await context.new_page()
 
@@ -376,22 +432,31 @@ async def run_batch(
     progress_callback=None,
     cancel_queue=None,
     dry_run: bool = None,
+    target_host: str = None,
+    proxy: str = None,
 ) -> dict:
     """
     Executes automated feedback submissions for a batch of AmritaVidya accounts.
     Uses a fresh BrowserContext for each student to prevent session contamination.
     """
+    if target_host:
+        set_target_host(target_host)
+
     final_headless = headless if headless is not None else HEADLESS
     final_dry_run = dry_run if dry_run is not None else DRY_RUN
     total_students = len(students)
 
     logger.info("==========================================")
     logger.info("🚀 STARTING AMRITAVIDYA BATCH SUBMISSION")
+    logger.info(f"🌐 Target Portal: {BASE_URL}")
     logger.info(f"👥 Total Students Queued: {total_students}")
     logger.info(f"🎯 Rating Scheme: {answer_idx}")
     logger.info(f"⏱ Delay Between Students: {delay_between_students}s")
     if final_dry_run:
         logger.info("🧪 DRY RUN enabled — forms will be filled but NOT submitted.")
+    eff_proxy = proxy or os.environ.get("HTTP_PROXY") or os.environ.get("ALL_PROXY")
+    if eff_proxy:
+        logger.info(f"🌐 Using Outbound Proxy: {eff_proxy}")
     logger.info("==========================================\n")
 
     stats = {
@@ -412,8 +477,12 @@ async def run_batch(
             progress_callback("batch_complete", stats)
         return stats
 
+    launch_opts = {"headless": final_headless, "args": CHROMIUM_ARGS}
+    if eff_proxy:
+        launch_opts["proxy"] = {"server": eff_proxy}
+
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=final_headless, args=CHROMIUM_ARGS)
+        browser = await p.chromium.launch(**launch_opts)
         try:
             for idx, student_info in enumerate(students, start=1):
                 # Check user cancellation before starting this student

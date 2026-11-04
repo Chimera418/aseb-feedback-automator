@@ -228,21 +228,25 @@ for _lgr in (tlp.logger, course.logger, vidya.logger):
     _lgr.setLevel(logging.INFO)
 
 # ── Background threads ─────────────────────────────────────────────────────────
-def run_asyncio_loop(run_id, email, password, default_idx, mode, ui_queue, user_config_queue):
+def run_asyncio_loop(run_id, email, password, default_idx, mode, ui_queue, user_config_queue, target_host=None, proxy=None):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
         module_to_run = {"tlp": tlp, "course": course, "vidya": vidya}[mode]
-        loop.run_until_complete(
-            module_to_run.run(
-                email=email,
-                password=password,
-                answer_idx=default_idx,
-                headless=True,
-                progress_callback=lambda etype, data: ui_queue.put((run_id, etype, data)),
-                user_config_queue=user_config_queue,
-            )
-        )
+        run_kwargs = {
+            "email": email,
+            "password": password,
+            "answer_idx": default_idx,
+            "headless": True,
+            "progress_callback": lambda etype, data: ui_queue.put((run_id, etype, data)),
+            "user_config_queue": user_config_queue,
+        }
+        if mode == "vidya":
+            if target_host:
+                run_kwargs["target_host"] = target_host
+            if proxy:
+                run_kwargs["proxy"] = proxy
+        loop.run_until_complete(module_to_run.run(**run_kwargs))
     except Exception as e:
         tlp.logger.error(f"Fatal error in automation loop: {e}")
     finally:
@@ -252,7 +256,7 @@ def run_asyncio_loop(run_id, email, password, default_idx, mode, ui_queue, user_
             pass
         ui_queue.put((run_id, "thread_done", None))
 
-def run_asyncio_batch_loop(run_id, students, rating_choice, delay_sec, ui_queue, cancel_queue):
+def run_asyncio_batch_loop(run_id, students, rating_choice, delay_sec, ui_queue, cancel_queue, target_host=None, proxy=None):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
@@ -264,6 +268,8 @@ def run_asyncio_batch_loop(run_id, students, rating_choice, delay_sec, ui_queue,
                 headless=True,
                 progress_callback=lambda etype, data: ui_queue.put((run_id, etype, data)),
                 cancel_queue=cancel_queue,
+                target_host=target_host,
+                proxy=proxy,
             )
         )
     except Exception as e:
@@ -502,8 +508,40 @@ if is_vidya:
         key="vidya_submode_choice"
     )
     is_batch_mode = "Batch" in vidya_submode
+
+    with st.expander("🌐 Portal IP & Proxy Settings (Optional)", expanded=False):
+        net_col1, net_col2 = st.columns([1, 1])
+        with net_col1:
+            target_ip_choice = st.selectbox(
+                "Portal Host / Direct IP Address",
+                [
+                    "210.212.205.26 (Public Direct IP — Recommended)",
+                    "web-blr.amrita.edu (Standard Domain)",
+                    "192.168.2.26 (Campus Wi-Fi Intranet IP)",
+                    "Custom IP / URL...",
+                ],
+                index=0,
+                key="vidya_target_ip_choice",
+                help="Using direct IP (210.212.205.26) connects directly without DNS lookups."
+            )
+            if "Custom" in target_ip_choice:
+                custom_host = st.text_input("Enter Custom IP or Hostname", value="210.212.205.26", key="vidya_custom_host")
+                effective_target_host = custom_host.strip()
+            else:
+                effective_target_host = target_ip_choice.split(" ")[0].strip()
+        with net_col2:
+            outbound_proxy_input = st.text_input(
+                "Outbound Proxy IP (Optional)",
+                value="",
+                key="vidya_outbound_proxy",
+                placeholder="http://user:pass@ip:port or http://ip:port",
+                help="Route browser traffic through a custom proxy IP."
+            )
+            effective_proxy = outbound_proxy_input.strip() if outbound_proxy_input.strip() else None
 else:
     is_batch_mode = False
+    effective_target_host = None
+    effective_proxy = None
 
 if not is_batch_mode:
     # ── Single Student Mode ───────────────────────────────────────────────────
@@ -593,7 +631,7 @@ if not is_batch_mode:
 
             t = threading.Thread(
                 target=run_asyncio_loop,
-                args=(new_run_id, email, password, default_idx, mode_key, _ui_q, _ucq),
+                args=(new_run_id, email, password, default_idx, mode_key, _ui_q, _ucq, effective_target_host, effective_proxy),
                 daemon=True,
             )
             t.start()
@@ -791,7 +829,7 @@ else:
 
             t = threading.Thread(
                 target=run_asyncio_batch_loop,
-                args=(new_run_id, students_list, batch_rating, float(batch_delay), _ui_q, _cq),
+                args=(new_run_id, students_list, batch_rating, float(batch_delay), _ui_q, _cq, effective_target_host, effective_proxy),
                 daemon=True,
             )
             t.start()
