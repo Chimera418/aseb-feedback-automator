@@ -63,6 +63,13 @@ FEEDBACK_URL = "https://students.amrita.edu/client/class-feedback"
 OUTLOOK_URL = "https://outlook.office.com/mail/inbox"
 PORTAL_BASE_URL = "https://students.amrita.edu/client/"
 
+CHROMIUM_ARGS = [
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-gpu",
+]
+
 # --- Robust Selectors (as defined by requirements) ---
 SEL = {
     "login_email": "input[name='loginfmt']",
@@ -551,7 +558,7 @@ async def run(email=None, password=None, answer_idx=None, headless=None, progres
             return
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=final_headless)
+        browser = await p.chromium.launch(headless=final_headless, args=CHROMIUM_ARGS)
         context = await browser.new_context()
         page = await context.new_page()
 

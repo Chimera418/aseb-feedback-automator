@@ -43,6 +43,13 @@ BASE_URL = "http://web-blr.amrita.edu/amritavidya/"
 LOGIN_URL = BASE_URL + "main_login.php"
 FEEDBACK_URL = BASE_URL + "feedback_home.php"
 
+CHROMIUM_ARGS = [
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-gpu",
+]
+
 SEL = {
     "login_user": "input[name='n1']",
     "login_pass": "input[name='n2']",
@@ -272,7 +279,7 @@ async def run(email=None, password=None, answer_idx=None, headless=None, progres
         final_password = getpass.getpass("Enter your AmritaVidya password: ")
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=final_headless)
+        browser = await p.chromium.launch(headless=final_headless, args=CHROMIUM_ARGS)
         context = await browser.new_context()
         page = await context.new_page()
 
@@ -403,7 +410,7 @@ async def run_batch(
         return stats
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=final_headless)
+        browser = await p.chromium.launch(headless=final_headless, args=CHROMIUM_ARGS)
         try:
             for idx, student_info in enumerate(students, start=1):
                 # Check user cancellation before starting this student

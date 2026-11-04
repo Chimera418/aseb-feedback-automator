@@ -5,12 +5,22 @@ import logging
 import queue
 import time
 import os
+import subprocess
+import sys
 import pandas as pd
 
-# Ensure Playwright browsers are installed (essential for Streamlit Cloud deployment)
+# Ensure Playwright Chromium browser is installed (essential for Streamlit Cloud deployment)
 @st.cache_resource
 def install_playwright():
-    os.system("playwright install chromium")
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            capture_output=True,
+            text=True,
+            timeout=180
+        )
+    except Exception as e:
+        print(f"Playwright auto-install notice: {e}")
 
 install_playwright()
 
@@ -184,7 +194,7 @@ def init_state():
         "run_id":                 0,        # increments per run to isolate events & keys
         "current_mode":           "tlp",
         "default_rating_choice":  "Very Good (1)",
-        "batch_text_content":     "",
+        "batch_text_input_area":  "",
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -649,38 +659,52 @@ if not is_batch_mode:
 else:
     # ── Batch Submit Mode (AmritaVidya Only) ──────────────────────────────────
     with st.expander("⚡ Quick Roll Number Range Generator", expanded=True):
-        rg_col1, rg_col2, rg_col3, rg_col4 = st.columns([2, 1, 1, 1])
+        rg_col1, rg_col2, rg_col3 = st.columns([2, 1, 1])
         with rg_col1:
             gen_prefix = st.text_input("Roll Prefix", value="bl.sc.u4aie24", key="gen_prefix")
         with rg_col2:
-            gen_start = st.text_input("Start Roll", value="101", key="gen_start")
+            gen_start = st.text_input("Start Roll", value="001", key="gen_start")
         with rg_col3:
-            gen_end = st.text_input("End Roll", value="160", key="gen_end")
-        with rg_col4:
-            st.write("&nbsp;")
-            gen_btn = st.button("➕ Add to List", key="gen_add_btn")
+            gen_end = st.text_input("End Roll", value="010", key="gen_end")
+
+        btn_c1, btn_c2 = st.columns([1, 1])
+        with btn_c1:
+            gen_btn = st.button("➕ Add to List", key="gen_add_btn", use_container_width=True)
+        with btn_c2:
+            clear_btn = st.button("🗑 Clear List", key="gen_clear_btn", use_container_width=True)
 
         if gen_btn:
-            if gen_start.isdigit() and gen_end.isdigit() and int(gen_start) <= int(gen_end):
-                s_num, e_num = int(gen_start), int(gen_end)
-                pad = max(len(gen_start), len(gen_end))
-                new_rolls = [f"{gen_prefix}{str(i).zfill(pad)}" for i in range(s_num, e_num + 1)]
-                curr_txt = st.session_state.get("batch_text_content", "")
+            s_clean = gen_start.strip()
+            e_clean = gen_end.strip()
+            if s_clean.isdigit() and e_clean.isdigit() and int(s_clean) <= int(e_clean):
+                s_num, e_num = int(s_clean), int(e_clean)
+                pad = max(len(s_clean), len(e_clean))
+                prefix = gen_prefix.strip()
+                new_rolls = [f"{prefix}{str(i).zfill(pad)}" for i in range(s_num, e_num + 1)]
+                curr_txt = st.session_state.get("batch_text_input_area", "")
                 if curr_txt.strip():
-                    st.session_state["batch_text_content"] = curr_txt.strip() + "\n" + "\n".join(new_rolls)
+                    st.session_state["batch_text_input_area"] = curr_txt.strip() + "\n" + "\n".join(new_rolls)
                 else:
-                    st.session_state["batch_text_content"] = "\n".join(new_rolls)
+                    st.session_state["batch_text_input_area"] = "\n".join(new_rolls)
                 st.rerun()
             else:
-                st.error("Please enter valid start and end numbers.")
+                st.error("Please enter valid start and end roll numbers (e.g. 001 to 010).")
+
+        if clear_btn:
+            st.session_state["batch_text_input_area"] = ""
+            st.rerun()
+
+    # Count unique students currently in queue
+    curr_input = st.session_state.get("batch_text_input_area", "")
+    lines = [l.strip() for l in curr_input.splitlines() if l.strip() and not l.strip().startswith("#")]
+    unique_count = len(dict.fromkeys(lines))
 
     batch_input_val = st.text_area(
-        "Student Roll Numbers (one per line, format: username or username,password)",
-        value=st.session_state.get("batch_text_content", ""),
-        height=140,
-        key="batch_text_input_area"
+        f"Student Roll Numbers ({unique_count} queued) — one per line:",
+        height=160,
+        key="batch_text_input_area",
+        help="Format: username or username,password (one per line)"
     )
-    st.session_state["batch_text_content"] = batch_input_val
 
     b_cfg1, b_cfg2, b_cfg3 = st.columns([2, 2, 1])
     with b_cfg1:
@@ -718,7 +742,7 @@ else:
 
     # Start Batch
     if start_batch_clicked:
-        raw_lines = batch_input_val.strip().splitlines()
+        raw_lines = st.session_state.get("batch_text_input_area", "").strip().splitlines()
         students_list = []
         seen = set()
         for line in raw_lines:
