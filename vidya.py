@@ -98,17 +98,20 @@ async def fetch_student_name(page: Page) -> str:
     return "Student"
 
 
-async def safe_goto(page: Page, url: str, timeout: int = 60000, max_retries: int = 3) -> None:
+async def safe_goto(page: Page, url: str, timeout: int = 30000, max_retries: int = 3) -> None:
     for attempt in range(1, max_retries + 1):
         try:
             logger.info(f"🔗 Navigating to {url} (Attempt {attempt}/{max_retries})")
             await page.goto(url, timeout=timeout, wait_until="domcontentloaded")
             return
         except Exception as e:
-            logger.warning(f"⚠️ Navigation failed: {e}")
+            err_str = str(e)
+            logger.warning(f"⚠️ Navigation failed: {err_str}")
+            if "ERR_CONNECTION_TIMED_OUT" in err_str or "Timeout" in err_str:
+                logger.warning("💡 Tip: The Amrita campus portal firewall blocks foreign/cloud datacenter IPs (like Streamlit Cloud/AWS) and some VPNs. Run the app locally on home/campus Wi-Fi without VPN.")
             if attempt == max_retries:
                 raise RuntimeError(f"Failed to load {url} after {max_retries} attempts. Last error: {e}")
-            await asyncio.sleep(5)
+            await asyncio.sleep(3)
 
 
 async def login(page: Page, username: str, password: str) -> None:
