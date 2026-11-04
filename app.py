@@ -530,12 +530,18 @@ if is_vidya:
             else:
                 effective_target_host = target_ip_choice.split(" ")[0].strip()
         with net_col2:
+            default_proxy_val = ""
+            try:
+                if "HTTP_PROXY" in st.secrets:
+                    default_proxy_val = st.secrets["HTTP_PROXY"]
+            except Exception:
+                pass
             outbound_proxy_input = st.text_input(
                 "Outbound Proxy IP (Optional)",
-                value="",
+                value=default_proxy_val,
                 key="vidya_outbound_proxy",
                 placeholder="http://user:pass@ip:port or http://ip:port",
-                help="Route browser traffic through a custom proxy IP."
+                help="Route browser traffic through a custom proxy IP (e.g. Indian proxy to bypass Streamlit Cloud restrictions)."
             )
             effective_proxy = outbound_proxy_input.strip() if outbound_proxy_input.strip() else None
 else:
