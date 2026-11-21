@@ -170,9 +170,14 @@ BATCH_RATING_OPTIONS = [
     "Randomized: Natural Mix (0, 1, 2)",
 ]
 
-def parse_rating(rating_str: str) -> int:
+def parse_rating(rating_val) -> int:
+    if isinstance(rating_val, int):
+        return rating_val
     try:
-        return int(rating_str.split("(")[1].split(")")[0])
+        s = str(rating_val)
+        if "(" in s and ")" in s:
+            return int(s.split("(")[1].split(")")[0])
+        return int(s.strip())
     except Exception:
         return 1
 
@@ -366,6 +371,7 @@ def drain_queue():
                 })
             st.session_state["subjects"]        = subjects
             st.session_state["is_fetching"]     = False
+            st.session_state["is_submitting"]   = False
             st.session_state["awaiting_submit"] = True
             st.session_state["running"]         = False
 
@@ -752,6 +758,30 @@ if not is_batch_mode and not is_queue_mode:
         else:
             st.markdown('<p style="color:#7c85a2;font-size:.85rem;text-align:center;padding:24px 0;">No subjects fetched yet. Click "Fetch Subjects" above.</p>', unsafe_allow_html=True)
     else:
+        # Quick Set All Bar
+        qc1, qc2 = st.columns([3, 1])
+        with qc1:
+            bulk_subj_rating = st.selectbox(
+                "Change All Subjects Rating To:",
+                RATING_OPTIONS,
+                index=RATING_OPTIONS.index(st.session_state.get("default_rating_choice", "Very Good (1)")) if st.session_state.get("default_rating_choice") in RATING_OPTIONS else 1,
+                key="bulk_subj_rating_selector",
+                disabled=not st.session_state.get("awaiting_submit", False)
+            )
+        with qc2:
+            st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+            apply_all_subj_clicked = st.button(
+                "⚡ Apply to All",
+                disabled=not st.session_state.get("awaiting_submit", False),
+                key="apply_all_subj_btn",
+                use_container_width=True
+            )
+        if apply_all_subj_clicked:
+            for s in subjects:
+                if s["status"] == "pending":
+                    s["rating"] = bulk_subj_rating
+            st.rerun()
+
         hcols = st.columns([3, 3, 2, 1.5])
         for h, lbl in zip(hcols, ["Course", "Class", "Rating", "Status"]):
             h.markdown(f'<span style="font-size:.72rem;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#7c85a2;">{lbl}</span>', unsafe_allow_html=True)
@@ -996,11 +1026,63 @@ elif is_queue_mode:
         st.progress(min(1.0, q_proc / q_tot))
 
     if st.session_state.get("myamrita_queue_list"):
+        # Bulk rating change controls
+        with st.expander("⚡ Change Ratings for Queued Students", expanded=True):
+            r_c1, r_c2 = st.columns([3, 1])
+            with r_c1:
+                bulk_q_rating = st.selectbox(
+                    "Set Rating Scheme for All Queued Students:",
+                    RATING_OPTIONS,
+                    index=1,
+                    key="bulk_q_rating_choice",
+                    disabled=st.session_state.get("is_myamrita_queue_running", False)
+                )
+            with r_c2:
+                st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+                apply_q_all_clicked = st.button(
+                    "⚡ Apply to All",
+                    disabled=st.session_state.get("is_myamrita_queue_running", False),
+                    key="apply_q_all_btn",
+                    use_container_width=True
+                )
+            if apply_q_all_clicked:
+                for it in st.session_state["myamrita_queue_list"]:
+                    if it.get("Status") == "⏳ Queued":
+                        it["Rating"] = bulk_q_rating
+                st.success(f"All queued students updated to '{bulk_q_rating}'!")
+                st.rerun()
+
         display_rows = [
             {"#": item["#"], "Student Email / Roll": item["Email / Roll"], "Mode": item["Portal Mode"], "Rating": item["Rating"], "Status": item["Status"]}
             for item in st.session_state["myamrita_queue_list"]
         ]
-        st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
+        is_q_running = st.session_state.get("is_myamrita_queue_running", False)
+        edited_df = st.data_editor(
+            pd.DataFrame(display_rows),
+            column_config={
+                "Rating": st.column_config.SelectboxColumn(
+                    "Rating",
+                    options=RATING_OPTIONS,
+                    required=True,
+                ),
+                "Mode": st.column_config.SelectboxColumn(
+                    "Mode",
+                    options=["🔄 Both (Course + TLP)", "📘 Course Feedback", "📗 TLP Feedback"],
+                    required=True,
+                )
+            },
+            disabled=["#", "Student Email / Roll", "Status"] if not is_q_running else ["#", "Student Email / Roll", "Mode", "Rating", "Status"],
+            use_container_width=True,
+            hide_index=True,
+            key="queue_editor_table"
+        )
+        if not is_q_running:
+            for edited_row in edited_df.to_dict(orient="records"):
+                for it in st.session_state["myamrita_queue_list"]:
+                    if it["#"] == edited_row["#"] and it.get("Status") == "⏳ Queued":
+                        it["Rating"] = edited_row["Rating"]
+                        it["Portal Mode"] = edited_row["Mode"]
+                        it["mode"] = "both" if "Both" in edited_row["Mode"] else ("course" if "Course" in edited_row["Mode"] else "tlp")
     else:
         st.markdown('<p style="color:#7c85a2;font-size:.85rem;text-align:center;padding:24px 0;">Queue is empty. Add students above and click Start Queue Execution.</p>', unsafe_allow_html=True)
 

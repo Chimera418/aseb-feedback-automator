@@ -28,6 +28,19 @@ def normalize_email(email_or_roll: str) -> str:
     return s
 
 
+def parse_rating(rating_val) -> int:
+    """Safely extracts integer index from rating strings (e.g. 'Very Good (1)' -> 1)."""
+    if isinstance(rating_val, int):
+        return rating_val
+    try:
+        s = str(rating_val)
+        if "(" in s and ")" in s:
+            return int(s.split("(")[1].split(")")[0])
+        return int(s.strip())
+    except Exception:
+        return 1
+
+
 async def run_single_chained(
     email: str,
     password: str,
@@ -170,7 +183,7 @@ async def run_queue(
         email = normalize_email(raw_email)
         password = item.get("password", "").strip()
         student_mode = item.get("mode", "both").lower()
-        answer_idx = item.get("answer_idx", 1)
+        answer_idx = parse_rating(item.get("answer_idx", item.get("rating", item.get("Rating", 1))))
 
         if not email or not password:
             logger.warning(f"⚠️ [{idx}/{total}] Skipping invalid queue item: email/password missing.")

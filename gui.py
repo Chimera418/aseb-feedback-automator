@@ -162,6 +162,7 @@ class FeedbackGUI:
         self.rating_cb['values'] = SINGLE_RATING_OPTIONS
         self.rating_cb.current(1)
         self.rating_cb.grid(row=2, column=1, sticky=tk.W, pady=2, padx=5)
+        self.rating_cb.bind("<<ComboboxSelected>>", lambda e: self.on_default_rating_change())
 
         # Action Buttons Box for Single Mode
         btn_box = ttk.Frame(single_input_frame)
@@ -183,6 +184,18 @@ class FeedbackGUI:
         # Single Student Step 2: Subject Review & Submit
         self.single_list_frame = ttk.LabelFrame(self.single_container, text="Step 2: Assign Ratings & Submit", padding=(10, 10))
         self.single_list_frame.pack(fill=tk.BOTH, expand=False, pady=5)
+
+        # Quick Set All Bar
+        quick_set_frame = ttk.Frame(self.single_list_frame)
+        quick_set_frame.pack(side=tk.TOP, fill=tk.X, pady=(0, 6))
+
+        ttk.Label(quick_set_frame, text="⚡ Set All Subjects To:").pack(side=tk.LEFT, padx=(0, 5))
+        self.set_all_rating_var = tk.StringVar(value=SINGLE_RATING_OPTIONS[1])
+        self.set_all_rating_cb = ttk.Combobox(quick_set_frame, textvariable=self.set_all_rating_var, state="readonly", width=18)
+        self.set_all_rating_cb['values'] = SINGLE_RATING_OPTIONS
+        self.set_all_rating_cb.pack(side=tk.LEFT, padx=(0, 6))
+
+        ttk.Button(quick_set_frame, text="⚡ Apply to All Subjects", command=self.apply_rating_to_all_subjects).pack(side=tk.LEFT)
 
         canvas = tk.Canvas(self.single_list_frame, height=140)
         scrollbar = ttk.Scrollbar(self.single_list_frame, orient="vertical", command=canvas.yview)
@@ -396,6 +409,19 @@ class FeedbackGUI:
         self.queue_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         q_tree_scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
 
+        # Rating modification row for queue
+        q_rating_mod_row = ttk.Frame(self.queue_list_frame)
+        q_rating_mod_row.pack(fill=tk.X, pady=(4, 2))
+
+        ttk.Label(q_rating_mod_row, text="Change Rating for Queue:").pack(side=tk.LEFT, padx=(0, 5))
+        self.q_edit_rating_var = tk.StringVar(value=SINGLE_RATING_OPTIONS[1])
+        self.q_edit_rating_cb = ttk.Combobox(q_rating_mod_row, textvariable=self.q_edit_rating_var, state="readonly", width=18)
+        self.q_edit_rating_cb['values'] = SINGLE_RATING_OPTIONS
+        self.q_edit_rating_cb.pack(side=tk.LEFT, padx=(0, 6))
+
+        ttk.Button(q_rating_mod_row, text="✏️ Update Selected", command=self.update_selected_queue_rating).pack(side=tk.LEFT, padx=2)
+        ttk.Button(q_rating_mod_row, text="⚡ Apply to All in Queue", command=self.update_all_queue_ratings).pack(side=tk.LEFT, padx=2)
+
         # Controls & Progress
         q_ctrl_row = ttk.Frame(self.queue_list_frame)
         q_ctrl_row.pack(fill=tk.X, pady=(6, 2))
@@ -531,11 +557,63 @@ class FeedbackGUI:
         unique_students = list(dict.fromkeys(students))
         self.batch_count_lbl.config(text=f"Student Roll Numbers ({len(unique_students)} queued):")
 
-    def parse_rating(self, rating_str):
+    def parse_rating(self, rating_val):
+        if isinstance(rating_val, int):
+            return rating_val
         try:
-            return int(rating_str.split('(')[1].split(')')[0])
+            s = str(rating_val)
+            if '(' in s and ')' in s:
+                return int(s.split('(')[1].split(')')[0])
+            return int(s.strip())
         except Exception:
             return 1
+
+    def on_default_rating_change(self):
+        val = self.rating_var.get()
+        if hasattr(self, "set_all_rating_var"):
+            self.set_all_rating_var.set(val)
+        for info, widgets in self.subject_widgets.items():
+            if widgets.get("cb") and str(widgets["cb"].cget("state")) != "disabled":
+                widgets["rating_var"].set(val)
+
+    def apply_rating_to_all_subjects(self):
+        new_val = self.set_all_rating_var.get()
+        for info, widgets in self.subject_widgets.items():
+            if widgets.get("cb") and str(widgets["cb"].cget("state")) != "disabled":
+                widgets["rating_var"].set(new_val)
+
+    def update_selected_queue_rating(self):
+        sel = self.queue_tree.selection()
+        if not sel:
+            messagebox.showinfo("Select Student", "Please click on a student in the queue table first.")
+            return
+        new_rating_str = self.q_edit_rating_var.get()
+        new_idx = self.parse_rating(new_rating_str)
+        for item_id in sel:
+            curr_vals = list(self.queue_tree.item(item_id, "values"))
+            if len(curr_vals) >= 4:
+                curr_vals[3] = new_rating_str
+                self.queue_tree.item(item_id, values=curr_vals)
+                email = curr_vals[1]
+                for it in self.myamrita_queue_items:
+                    if it["email"] == email:
+                        it["rating_str"] = new_rating_str
+                        it["answer_idx"] = new_idx
+
+    def update_all_queue_ratings(self):
+        if not self.myamrita_queue_items:
+            messagebox.showinfo("Queue Empty", "No students currently in queue.")
+            return
+        new_rating_str = self.q_edit_rating_var.get()
+        new_idx = self.parse_rating(new_rating_str)
+        for it in self.myamrita_queue_items:
+            it["rating_str"] = new_rating_str
+            it["answer_idx"] = new_idx
+        for item_id in self.queue_tree.get_children():
+            curr_vals = list(self.queue_tree.item(item_id, "values"))
+            if len(curr_vals) >= 4:
+                curr_vals[3] = new_rating_str
+                self.queue_tree.item(item_id, values=curr_vals)
 
     # ── Single Student Actions ────────────────────────────────────────────────
     def cancel_action(self):
@@ -928,6 +1006,9 @@ class FeedbackGUI:
                         self.root.title(f"MyAmrita Feedback Automater — Welcome, {data}")
 
                 elif event_type == "waiting_for_user":
+                    for w in self.subjects_inner_frame.winfo_children():
+                        w.destroy()
+                    self.subject_widgets.clear()
                     for item_data in data:
                         info = item_data["info"]
                         parts = info.split(' | ')

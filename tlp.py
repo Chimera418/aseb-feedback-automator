@@ -177,7 +177,7 @@ async def safe_goto(page: Page, url: str, timeout: int = 120000, wait_until: str
 # --- Helper: Microsoft Login ---
 
 async def login_to_microsoft(page: Page, email: str, password: str) -> None:
-    """Reusable function to log in to a Microsoft account."""
+    """Reusable function to log in to a Microsoft account, with automatic handling for 'Choose a way to sign in' and Authenticator prompts."""
     try:
         logger.info("...Waiting for Microsoft login page to load.")
         await page.wait_for_selector(SEL["login_email"], timeout=20000)
@@ -190,18 +190,77 @@ async def login_to_microsoft(page: Page, email: str, password: str) -> None:
         # 2. Handle "Work/School" prompt (if it appears)
         try:
             logger.info("...Checking for 'Work/School' account prompt.")
-            await page.locator(SEL["login_work_school"]).click(timeout=5000)
+            await page.locator(SEL["login_work_school"]).click(timeout=4000)
             logger.info("...Selected 'Work or school account'.")
         except Exception:
-            logger.info("... 'Work/School' prompt not found, proceeding to password.")
+            logger.info("... 'Work/School' prompt not found, proceeding.")
 
-        # 3. Enter Password
+        # 3. Handle "Choose a way to sign in" / Authenticator prompt (if it appears)
+        # Incase Microsoft defaults to Authenticator app approval, choose "Use my password"
+        for _ in range(5):
+            # If password field is already visible, proceed directly
+            try:
+                if await page.locator(SEL["login_password"]).is_visible():
+                    break
+            except Exception:
+                pass
+
+            # Check if "Use my password" is visible (e.g. on "Choose a way to sign in" screen)
+            pwd_choice_found = False
+            pwd_selectors = [
+                "text='Use my password'",
+                "text='Use your password instead'",
+                "#idA_PWD_SwitchToPassword",
+                "div[data-value='Password']",
+                "[role='button']:has-text('Use my password')",
+                "div.table-row:has-text('Use my password')",
+                "div:has-text('Use my password')",
+                "button:has-text('Use my password')",
+            ]
+            for p_sel in pwd_selectors:
+                try:
+                    loc = page.locator(p_sel).last
+                    if await loc.is_visible():
+                        logger.info("...Detected 'Choose a way to sign in'. Selecting 'Use my password'...")
+                        await loc.click(timeout=4000)
+                        pwd_choice_found = True
+                        await asyncio.sleep(1)
+                        break
+                except Exception:
+                    continue
+
+            if pwd_choice_found:
+                break
+
+            # If stuck on Authenticator prompt, look for "Other ways to sign in" / "Sign-in options"
+            other_ways_selectors = [
+                "#signInAnotherWay",
+                "text='Other ways to sign in'",
+                "text='Sign-in options'",
+                "a:has-text('Other ways to sign in')",
+                "a:has-text('Sign-in options')",
+                "text='I can\\'t use my Microsoft Authenticator app right now'",
+            ]
+            for o_sel in other_ways_selectors:
+                try:
+                    loc = page.locator(o_sel).first
+                    if await loc.is_visible():
+                        logger.info("...Detected Authenticator prompt. Clicking 'Other ways to sign in'...")
+                        await loc.click(timeout=4000)
+                        await asyncio.sleep(1)
+                        break
+                except Exception:
+                    continue
+
+            await asyncio.sleep(0.5)
+
+        # 4. Enter Password
         logger.info("...Entering password.")
-        await page.wait_for_selector(SEL["login_password"], timeout=15000)
+        await page.wait_for_selector(SEL["login_password"], timeout=20000)
         await page.fill(SEL["login_password"], password)
         await page.click(SEL["login_next"], timeout=15000)
 
-        # 4. Handle "Stay signed in?" prompt (click "No")
+        # 5. Handle "Stay signed in?" prompt (click "No")
         try:
             logger.info("...Handling 'Stay signed in?' prompt.")
             await page.locator(SEL["login_no_stay"]).first.click(timeout=15000)
@@ -211,7 +270,10 @@ async def login_to_microsoft(page: Page, email: str, password: str) -> None:
 
     except Exception as e:
         logger.info(f"❌ Error during Microsoft login: {e}")
-        await page.screenshot(path=runctx.shot("login_error.png"))
+        try:
+            await page.screenshot(path=runctx.shot("login_error.png"))
+        except Exception:
+            pass
         raise
 
 # --- Helper: Outlook OTP Fetch ---
