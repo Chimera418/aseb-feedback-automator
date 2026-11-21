@@ -304,11 +304,11 @@ class FeedbackGUI:
         self.batch_summary_lbl.pack(anchor="w", pady=(2, 0))
 
         # ── Bottom Frame: Shared Activity Log ─────────────────────────────────
-        log_frame = ttk.LabelFrame(self.root, text="Activity Log", padding=(10, 8))
-        log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        self.log_frame = ttk.LabelFrame(self.root, text="Activity Log", padding=(10, 8))
+        self.log_frame.pack(side=tk.BOTTOM, fill=tk.BOTH, expand=True, padx=10, pady=5)
 
-        self.log_text = tk.Text(log_frame, state='disabled', wrap='word', height=7, font=("Consolas", 9))
-        log_scrollbar = ttk.Scrollbar(log_frame, command=self.log_text.yview)
+        self.log_text = tk.Text(self.log_frame, state='disabled', wrap='word', height=7, font=("Consolas", 9))
+        log_scrollbar = ttk.Scrollbar(self.log_frame, command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=log_scrollbar.set)
         self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         log_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -352,15 +352,15 @@ class FeedbackGUI:
 
             if self.vidya_submode_var.get() == "batch":
                 self.single_container.pack_forget()
-                self.batch_container.pack(fill=tk.BOTH, expand=False, padx=10, pady=5)
+                self.batch_container.pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=10, pady=5, before=self.log_frame)
             else:
                 self.batch_container.pack_forget()
-                self.single_container.pack(fill=tk.BOTH, expand=False, padx=10, pady=5)
+                self.single_container.pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=10, pady=5, before=self.log_frame)
         else:
             self.submode_lbl.grid_remove()
             self.submode_frame.grid_remove()
             self.batch_container.pack_forget()
-            self.single_container.pack(fill=tk.BOTH, expand=False, padx=10, pady=5)
+            self.single_container.pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=10, pady=5, before=self.log_frame)
 
     def generate_batch_range(self):
         prefix = self.batch_prefix_var.get().strip()
