@@ -237,7 +237,7 @@ for _lgr in (tlp.logger, course.logger, vidya.logger, myamrita_queue.logger):
     _lgr.setLevel(logging.INFO)
 
 # ── Background threads ─────────────────────────────────────────────────────────
-def run_asyncio_loop(run_id, email, password, default_idx, mode, ui_queue, user_config_queue, target_host=None, proxy=None):
+def run_asyncio_loop(run_id, email, password, default_idx, mode, ui_queue, user_config_queue, target_host=None, proxy=None, auto_submit=False):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
@@ -251,17 +251,19 @@ def run_asyncio_loop(run_id, email, password, default_idx, mode, ui_queue, user_
                     headless=True,
                     progress_callback=lambda etype, data: ui_queue.put((run_id, etype, data)),
                     user_config_queue=user_config_queue,
+                    auto_submit=auto_submit,
                 )
             )
         else:
             module_to_run = {"tlp": tlp, "course": course, "vidya": vidya}[mode]
+            effective_q = None if auto_submit else user_config_queue
             run_kwargs = {
                 "email": email,
                 "password": password,
                 "answer_idx": default_idx,
                 "headless": True,
                 "progress_callback": lambda etype, data: ui_queue.put((run_id, etype, data)),
-                "user_config_queue": user_config_queue,
+                "user_config_queue": effective_q,
             }
             if mode == "vidya":
                 if target_host:
@@ -676,10 +678,22 @@ if not is_batch_mode and not is_queue_mode:
     has_subjects = bool(st.session_state.get("subjects"))
     fetch_btn_label = "🔄 Re-fetch Subjects" if (has_subjects or st.session_state.get("done")) else "🔍 Fetch Subjects"
 
-    btn_col1, btn_col2 = st.columns([3, 1])
+    btn_col1, btn_col2, btn_col3 = st.columns([2.5, 2, 1])
     with btn_col1:
-        fetch_clicked = st.button(fetch_btn_label, disabled=is_busy, key="fetch_btn")
+        run_fully_clicked = st.button(
+            "🚀 Run Fully (Auto-Submit)",
+            disabled=is_busy,
+            key="run_fully_btn",
+            help="Runs completely without stopping to ask. Automatically submits all feedbacks with chosen rating."
+        )
     with btn_col2:
+        fetch_clicked = st.button(
+            fetch_btn_label,
+            disabled=is_busy,
+            key="fetch_btn",
+            help="Fetches subjects first so you can review/tweak individual faculty ratings before submitting."
+        )
+    with btn_col3:
         can_cancel = is_busy or st.session_state.get("awaiting_submit", False)
         cancel_clicked = st.button("⏹ Cancel", disabled=not can_cancel, key="cancel_btn")
 
@@ -705,7 +719,48 @@ if not is_batch_mode and not is_queue_mode:
         st.session_state["log_lines"].append("🛑 Operation cancelled by user.")
         st.rerun()
 
-    # Fetch handler
+    # Run Fully Handler (No intermediate prompts, submits with upfront rating)
+    if run_fully_clicked:
+        if not email or (not password and not is_vidya):
+            st.error("Please enter both Email and Password.")
+        else:
+            if st.session_state.get("user_config_queue"):
+                try:
+                    st.session_state["user_config_queue"].put_nowait("CANCEL")
+                except Exception:
+                    pass
+
+            new_run_id = st.session_state.get("run_id", 0) + 1
+            st.session_state["run_id"]                = new_run_id
+            st.session_state["subjects"]              = []
+            st.session_state["log_lines"]             = []
+            st.session_state["done"]                  = False
+            st.session_state["awaiting_submit"]       = False
+            st.session_state["is_fetching"]           = False
+            st.session_state["is_submitting"]         = True
+            st.session_state["running"]               = True
+            st.session_state["student_name"]          = ""
+            st.session_state["user_config_queue"]     = queue.Queue()
+            st.session_state["default_rating_choice"] = default_rating
+
+            for _lgr in (tlp.logger, course.logger, vidya.logger, myamrita_queue.logger):
+                for _h in _lgr.handlers:
+                    if hasattr(_h, "run_id"):
+                        _h.run_id = new_run_id
+
+            default_idx = parse_rating(default_rating)
+            _ui_q  = st.session_state["ui_queue"]
+            _ucq   = st.session_state["user_config_queue"]
+
+            t = threading.Thread(
+                target=run_asyncio_loop,
+                args=(new_run_id, email, password, default_idx, mode_key, _ui_q, _ucq, effective_target_host, effective_proxy, True),
+                daemon=True,
+            )
+            t.start()
+            st.rerun()
+
+    # Fetch handler (Review first)
     if fetch_clicked:
         if not email or (not password and not is_vidya):
             st.error("Please enter both Email and Password.")
@@ -729,7 +784,7 @@ if not is_batch_mode and not is_queue_mode:
             st.session_state["user_config_queue"]     = queue.Queue()
             st.session_state["default_rating_choice"] = default_rating
 
-            for _lgr in (tlp.logger, course.logger, vidya.logger):
+            for _lgr in (tlp.logger, course.logger, vidya.logger, myamrita_queue.logger):
                 for _h in _lgr.handlers:
                     if hasattr(_h, "run_id"):
                         _h.run_id = new_run_id
@@ -740,7 +795,7 @@ if not is_batch_mode and not is_queue_mode:
 
             t = threading.Thread(
                 target=run_asyncio_loop,
-                args=(new_run_id, email, password, default_idx, mode_key, _ui_q, _ucq, effective_target_host, effective_proxy),
+                args=(new_run_id, email, password, default_idx, mode_key, _ui_q, _ucq, effective_target_host, effective_proxy, False),
                 daemon=True,
             )
             t.start()

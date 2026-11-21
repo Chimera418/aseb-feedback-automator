@@ -50,15 +50,24 @@ async def run_single_chained(
     progress_callback: Optional[Callable] = None,
     cancel_queue=None,
     user_config_queue=None,
+    auto_submit: bool = False,
 ) -> None:
     """
     Executes Course, TLP, or Both sequentially for a single student.
+    - If auto_submit is True or user_config_queue is None: runs fully without pausing,
+      automatically submitting with answer_idx.
+    - If user_config_queue is provided: allows reviewing Phase 1, then automatically
+      completes Phase 2 using the chosen rating without asking again!
     """
     norm_email = normalize_email(email)
     logger.info("==========================================")
     logger.info(f"🚀 STARTING MYAMRITA EXECUTION: {mode.upper()}")
     logger.info(f"📧 Student: {norm_email}")
-    logger.info(f"🎯 Default Rating Scheme: {answer_idx}")
+    logger.info(f"🎯 Rating Scheme: {answer_idx}")
+    if auto_submit or user_config_queue is None:
+        logger.info("⚡ Execution Mode: Fully Automated (Zero Pauses)")
+    else:
+        logger.info("🔍 Execution Mode: Review Phase 1 First, Auto Phase 2")
     logger.info("==========================================")
 
     def check_cancelled() -> bool:
@@ -71,6 +80,8 @@ async def run_single_chained(
             except Exception:
                 pass
         return False
+
+    phase1_queue = None if auto_submit else user_config_queue
 
     # 1. Course Feedback Phase
     if mode in ("course", "both"):
@@ -89,7 +100,7 @@ async def run_single_chained(
                 answer_idx=answer_idx,
                 headless=headless,
                 progress_callback=progress_callback,
-                user_config_queue=user_config_queue,
+                user_config_queue=phase1_queue,
             )
             logger.info(f"✅ Course Feedback phase completed for {norm_email}.")
         except Exception as e:
@@ -107,6 +118,10 @@ async def run_single_chained(
         if progress_callback:
             progress_callback("chain_phase", {"phase": "tlp", "label": "TLP Feedback"})
 
+        # If mode was 'both', do NOT pause to ask again for TLP!
+        # Run TLP fully and automatically using answer_idx.
+        phase2_queue = None if (mode == "both" or auto_submit) else user_config_queue
+
         try:
             await tlp.run(
                 email=norm_email,
@@ -114,7 +129,7 @@ async def run_single_chained(
                 answer_idx=answer_idx,
                 headless=headless,
                 progress_callback=progress_callback,
-                user_config_queue=user_config_queue,
+                user_config_queue=phase2_queue,
             )
             logger.info(f"✅ TLP Feedback phase completed for {norm_email}.")
         except Exception as e:

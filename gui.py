@@ -168,8 +168,11 @@ class FeedbackGUI:
         btn_box = ttk.Frame(single_input_frame)
         btn_box.grid(row=0, column=2, rowspan=3, padx=20, pady=2)
 
-        self.fetch_btn = ttk.Button(btn_box, text="🔍 Fetch Subjects", command=self.start_fetching)
-        self.fetch_btn.pack(fill=tk.X, pady=(0, 5), ipadx=10, ipady=6)
+        self.auto_run_btn = ttk.Button(btn_box, text="🚀 Run & Submit All", command=self.start_auto_run)
+        self.auto_run_btn.pack(fill=tk.X, pady=(0, 4), ipadx=10, ipady=5)
+
+        self.fetch_btn = ttk.Button(btn_box, text="🔍 Review First", command=self.start_fetching)
+        self.fetch_btn.pack(fill=tk.X, pady=(0, 4), ipadx=10, ipady=3)
 
         self.cancel_btn = ttk.Button(btn_box, text="⏹ Cancel", command=self.cancel_action, state=tk.DISABLED)
         self.cancel_btn.pack(fill=tk.X, ipadx=10, ipady=3)
@@ -625,10 +628,54 @@ class FeedbackGUI:
         self.is_fetching = False
         self.is_submitting = False
         self.awaiting_submit = False
-        self.fetch_btn.config(state=tk.NORMAL, text="🔍 Fetch Subjects")
+        self.auto_run_btn.config(state=tk.NORMAL, text="🚀 Run & Submit All")
+        self.fetch_btn.config(state=tk.NORMAL, text="🔍 Review First")
         self.cancel_btn.config(state=tk.DISABLED)
         self.submit_btn.config(state=tk.DISABLED)
         tlp.logger.info("GUI: 🛑 Operation cancelled by user.")
+
+    def start_auto_run(self):
+        email = self.email_var.get().strip()
+        password = self.password_var.get()
+        default_rating_idx = self.parse_rating(self.rating_var.get())
+
+        mode = self.mode_var.get()
+        if not email or (not password and mode != "vidya"):
+            messagebox.showerror("Missing Info", "Please enter both Email and Password.")
+            return
+
+        if self.awaiting_submit:
+            try:
+                self.user_config_queue.put_nowait("CANCEL")
+            except Exception:
+                pass
+
+        self.run_id += 1
+        current_run_id = self.run_id
+        self.user_config_queue = queue.Queue()
+        self.is_fetching = False
+        self.is_submitting = True
+        self.awaiting_submit = False
+        self.done = False
+
+        self.auto_run_btn.config(state=tk.DISABLED, text="🚀 Running...")
+        self.fetch_btn.config(state=tk.DISABLED)
+        self.cancel_btn.config(state=tk.NORMAL)
+        self.submit_btn.config(state=tk.DISABLED)
+
+        for widget in self.subjects_inner_frame.winfo_children():
+            widget.destroy()
+        self.subject_widgets.clear()
+
+        tlp.logger.info(f"GUI: Starting fully automated run ({mode.upper()} Mode) with rating scheme {default_rating_idx}...")
+
+        thread = threading.Thread(
+            target=self.run_asyncio_loop,
+            args=(current_run_id, email, password, default_rating_idx, mode, None, True),
+            daemon=True
+        )
+        thread.start()
+        self.root.after(100, self.process_queue)
 
     def start_fetching(self):
         email = self.email_var.get().strip()
@@ -654,6 +701,7 @@ class FeedbackGUI:
         self.awaiting_submit = False
         self.done = False
 
+        self.auto_run_btn.config(state=tk.DISABLED)
         self.fetch_btn.config(state=tk.DISABLED, text="⏳ Fetching...")
         self.cancel_btn.config(state=tk.NORMAL)
         self.submit_btn.config(state=tk.DISABLED)
@@ -666,13 +714,13 @@ class FeedbackGUI:
 
         thread = threading.Thread(
             target=self.run_asyncio_loop,
-            args=(current_run_id, email, password, default_rating_idx, mode, self.user_config_queue),
+            args=(current_run_id, email, password, default_rating_idx, mode, self.user_config_queue, False),
             daemon=True
         )
         thread.start()
         self.root.after(100, self.process_queue)
 
-    def run_asyncio_loop(self, run_id, email, password, default_idx, mode, user_config_queue):
+    def run_asyncio_loop(self, run_id, email, password, default_idx, mode, user_config_queue, auto_submit=False):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
@@ -686,10 +734,12 @@ class FeedbackGUI:
                         headless=True,
                         progress_callback=lambda etype, data: self.handle_progress(run_id, etype, data),
                         user_config_queue=user_config_queue,
+                        auto_submit=auto_submit,
                     )
                 )
             else:
                 module_to_run = {"tlp": tlp, "course": course, "vidya": vidya}[mode]
+                effective_q = None if auto_submit else user_config_queue
                 loop.run_until_complete(
                     module_to_run.run(
                         email=email,
@@ -697,7 +747,7 @@ class FeedbackGUI:
                         answer_idx=default_idx,
                         headless=True,
                         progress_callback=lambda etype, data: self.handle_progress(run_id, etype, data),
-                        user_config_queue=user_config_queue
+                        user_config_queue=effective_q
                     )
                 )
         except Exception as e:
@@ -1056,7 +1106,8 @@ class FeedbackGUI:
                     self.is_fetching = False
                     self.is_submitting = False
 
-                    self.fetch_btn.config(state=tk.NORMAL, text="🔄 Re-fetch Subjects" if self.subject_widgets else "🔍 Fetch Subjects")
+                    self.auto_run_btn.config(state=tk.NORMAL, text="🚀 Run & Submit All")
+                    self.fetch_btn.config(state=tk.NORMAL, text="🔄 Review First" if self.subject_widgets else "🔍 Review First")
                     self.cancel_btn.config(state=tk.DISABLED)
                     self.submit_btn.config(state=tk.DISABLED)
 
