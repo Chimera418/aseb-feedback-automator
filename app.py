@@ -27,6 +27,7 @@ install_playwright()
 import tlp
 import course
 import vidya
+import myamrita_queue
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -183,6 +184,9 @@ def init_state():
         "subjects":               [],       # list of {info, course_name, class_name, status, rating}
         "batch_students":         [],       # list of dicts for batch table
         "batch_stats":            {"total": 0, "success": 0, "skipped": 0, "failed": 0, "processed": 0},
+        "is_myamrita_queue_running": False, # True while actively running MyAmrita queue
+        "myamrita_queue_list":    [],       # list of dicts for MyAmrita queue table
+        "myamrita_queue_stats":   {"total": 0, "success": 0, "failed": 0, "processed": 0},
         "log_lines":              [],
         "running":                False,    # True only while actively fetching or submitting
         "is_fetching":            False,    # True while actively logging in & scraping list
@@ -220,7 +224,7 @@ _log_q = st.session_state["ui_queue"]
 _current_rid = st.session_state.get("run_id", 0)
 
 # Remove any stale QueueHandlers (added by previous reruns), then attach one fresh one
-for _lgr in (tlp.logger, course.logger, vidya.logger):
+for _lgr in (tlp.logger, course.logger, vidya.logger, myamrita_queue.logger):
     _lgr.handlers = [h for h in _lgr.handlers if h.__class__.__name__ != "QueueHandler"]
     _h = QueueHandler(_log_q)
     _h.run_id = _current_rid
@@ -232,21 +236,34 @@ def run_asyncio_loop(run_id, email, password, default_idx, mode, ui_queue, user_
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        module_to_run = {"tlp": tlp, "course": course, "vidya": vidya}[mode]
-        run_kwargs = {
-            "email": email,
-            "password": password,
-            "answer_idx": default_idx,
-            "headless": True,
-            "progress_callback": lambda etype, data: ui_queue.put((run_id, etype, data)),
-            "user_config_queue": user_config_queue,
-        }
-        if mode == "vidya":
-            if target_host:
-                run_kwargs["target_host"] = target_host
-            if proxy:
-                run_kwargs["proxy"] = proxy
-        loop.run_until_complete(module_to_run.run(**run_kwargs))
+        if mode == "both":
+            loop.run_until_complete(
+                myamrita_queue.run_single_chained(
+                    email=email,
+                    password=password,
+                    mode="both",
+                    answer_idx=default_idx,
+                    headless=True,
+                    progress_callback=lambda etype, data: ui_queue.put((run_id, etype, data)),
+                    user_config_queue=user_config_queue,
+                )
+            )
+        else:
+            module_to_run = {"tlp": tlp, "course": course, "vidya": vidya}[mode]
+            run_kwargs = {
+                "email": email,
+                "password": password,
+                "answer_idx": default_idx,
+                "headless": True,
+                "progress_callback": lambda etype, data: ui_queue.put((run_id, etype, data)),
+                "user_config_queue": user_config_queue,
+            }
+            if mode == "vidya":
+                if target_host:
+                    run_kwargs["target_host"] = target_host
+                if proxy:
+                    run_kwargs["proxy"] = proxy
+            loop.run_until_complete(module_to_run.run(**run_kwargs))
     except Exception as e:
         tlp.logger.error(f"Fatal error in automation loop: {e}")
     finally:
@@ -255,6 +272,28 @@ def run_asyncio_loop(run_id, email, password, default_idx, mode, ui_queue, user_
         except Exception:
             pass
         ui_queue.put((run_id, "thread_done", None))
+
+def run_asyncio_myamrita_queue_loop(run_id, queue_items, delay_sec, ui_queue, cancel_queue):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(
+            myamrita_queue.run_queue(
+                queue_items=queue_items,
+                delay_between_students=delay_sec,
+                headless=True,
+                progress_callback=lambda etype, data: ui_queue.put((run_id, etype, data)),
+                cancel_queue=cancel_queue,
+            )
+        )
+    except Exception as e:
+        tlp.logger.error(f"Fatal error in MyAmrita queue loop: {e}")
+    finally:
+        try:
+            loop.close()
+        except Exception:
+            pass
+        ui_queue.put((run_id, "myamrita_queue_thread_done", None))
 
 def run_asyncio_batch_loop(run_id, students, rating_choice, delay_sec, ui_queue, cancel_queue, target_host=None, proxy=None):
     loop = asyncio.new_event_loop()
@@ -428,6 +467,53 @@ def drain_queue():
             st.session_state["is_batch_running"] = False
             st.session_state["running"] = False
 
+        # ── MyAmrita Queue Mode Events ────────────────────────────────────────
+        elif event_type == "queue_start":
+            st.session_state["is_myamrita_queue_running"] = True
+            st.session_state["running"] = True
+            st.session_state["done"] = False
+            if "stats" in data:
+                st.session_state["myamrita_queue_stats"] = data["stats"]
+
+        elif event_type == "queue_student_start":
+            em = data["email"]
+            for s in st.session_state.get("myamrita_queue_list", []):
+                if s.get("Email / Roll") == em or s.get("email") == em:
+                    s["Status"] = f"🔐 Starting ({data.get('mode_label', '')})..."
+
+        elif event_type == "queue_student_step":
+            em = data["email"]
+            for s in st.session_state.get("myamrita_queue_list", []):
+                if s.get("Email / Roll") == em or s.get("email") == em:
+                    s["Status"] = data["status"]
+
+        elif event_type == "queue_student_done":
+            em = data["email"]
+            for s in st.session_state.get("myamrita_queue_list", []):
+                if s.get("Email / Roll") == em or s.get("email") == em:
+                    s["Status"] = "✅ Done"
+            if "stats" in data:
+                st.session_state["myamrita_queue_stats"] = data["stats"]
+
+        elif event_type == "queue_student_failed":
+            em = data["email"]
+            err = data.get("error", "Error")
+            for s in st.session_state.get("myamrita_queue_list", []):
+                if s.get("Email / Roll") == em or s.get("email") == em:
+                    s["Status"] = f"❌ Failed ({err[:30]})"
+            if "stats" in data:
+                st.session_state["myamrita_queue_stats"] = data["stats"]
+
+        elif event_type == "queue_complete":
+            st.session_state["is_myamrita_queue_running"] = False
+            st.session_state["running"] = False
+            st.session_state["done"] = True
+            st.session_state["myamrita_queue_stats"] = data
+
+        elif event_type == "myamrita_queue_thread_done":
+            st.session_state["is_myamrita_queue_running"] = False
+            st.session_state["running"] = False
+
     return changed
 
 # ── Helper: format log lines with colour ──────────────────────────────────────
@@ -475,6 +561,7 @@ st.markdown('<div class="card"><div class="card-title">Step 1 — Setup &amp; Co
 MODES = {
     "TLP Feedback": "tlp",
     "Course Feedback": "course",
+    "🔄 Both (Course + TLP)": "both",
     "AmritaVidya Feedback": "vidya",
 }
 
@@ -484,7 +571,7 @@ is_vidya = mode_key == "vidya"
 
 # Detect mode switch and reset pending state if mode changed
 if "current_mode" in st.session_state and st.session_state["current_mode"] != mode_key:
-    if (st.session_state.get("awaiting_submit") or st.session_state.get("is_batch_running")) and st.session_state.get("user_config_queue"):
+    if (st.session_state.get("awaiting_submit") or st.session_state.get("is_batch_running") or st.session_state.get("is_myamrita_queue_running")) and st.session_state.get("user_config_queue"):
         try:
             st.session_state["user_config_queue"].put_nowait("CANCEL")
         except Exception:
@@ -497,6 +584,7 @@ if "current_mode" in st.session_state and st.session_state["current_mode"] != mo
     st.session_state["is_fetching"]       = False
     st.session_state["is_submitting"]     = False
     st.session_state["is_batch_running"]  = False
+    st.session_state["is_myamrita_queue_running"] = False
     st.session_state["running"]           = False
 st.session_state["current_mode"] = mode_key
 
@@ -508,6 +596,7 @@ if is_vidya:
         key="vidya_submode_choice"
     )
     is_batch_mode = "Batch" in vidya_submode
+    is_queue_mode = False
 
     with st.expander("🌐 Portal IP & Proxy Settings (Optional)", expanded=False):
         net_col1, net_col2 = st.columns([1, 1])
@@ -549,7 +638,15 @@ else:
     effective_target_host = None
     effective_proxy = None
 
-if not is_batch_mode:
+    myamrita_submode = st.radio(
+        "MyAmrita Execution Mode",
+        ["👤 Single Student", "⚡ Queue Mode (Multiple Students / Tasks)"],
+        horizontal=True,
+        key="myamrita_submode_choice"
+    )
+    is_queue_mode = "Queue" in myamrita_submode
+
+if not is_batch_mode and not is_queue_mode:
     # ── Single Student Mode ───────────────────────────────────────────────────
     col1, col2, col3 = st.columns([3, 3, 2])
     with col1:
@@ -697,6 +794,215 @@ if not is_batch_mode:
             st.session_state["running"]         = True
             tlp.logger.info("GUI: Ratings locked in. Resuming bot execution...")
             st.rerun()
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+elif is_queue_mode:
+    # ── MyAmrita Queue Mode (Course / TLP / Both) ─────────────────────────────
+    with st.expander("➕ Add Single Student to Queue", expanded=True):
+        q_col1, q_col2, q_col3, q_col4 = st.columns([2.5, 2, 2, 2])
+        with q_col1:
+            q_email = st.text_input("Amrita Email or Roll Number", placeholder="bl.sc.u4aie24001", key="q_single_email")
+        with q_col2:
+            q_pwd = st.text_input("Password", type="password", key="q_single_pwd")
+        with q_col3:
+            q_mode = st.selectbox(
+                "Feedback Portal",
+                ["🔄 Both (Course + TLP)", "📘 Course Feedback", "📗 TLP Feedback"],
+                key="q_single_mode"
+            )
+        with q_col4:
+            q_rating = st.selectbox("Rating Scheme", RATING_OPTIONS, index=1, key="q_single_rating")
+
+        q_add_btn = st.button("➕ Add Student to Queue", key="q_single_add_btn")
+        if q_add_btn:
+            clean_em = myamrita_queue.normalize_email(q_email)
+            if not clean_em or not q_pwd:
+                st.error("Please enter both Email/Roll and Password.")
+            else:
+                mode_code = "both" if "Both" in q_mode else ("course" if "Course" in q_mode else "tlp")
+                q_list = st.session_state.get("myamrita_queue_list", [])
+                q_list.append({
+                    "#": len(q_list) + 1,
+                    "Email / Roll": clean_em,
+                    "password": q_pwd,
+                    "mode": mode_code,
+                    "Portal Mode": q_mode,
+                    "Rating": q_rating,
+                    "Status": "⏳ Queued"
+                })
+                st.session_state["myamrita_queue_list"] = q_list
+                st.success(f"Added {clean_em} to queue!")
+                st.rerun()
+
+    with st.expander("📋 Bulk Add Students (Text Paste)", expanded=False):
+        st.markdown(
+            "Paste multiple students, one per line. Formats supported:<br>"
+            "• <code>roll_or_email,password</code><br>"
+            "• <code>roll_or_email,password,mode</code> (mode: <code>both</code>, <code>course</code>, <code>tlp</code>)<br>"
+            "• <code>roll_or_email,password,mode,rating_idx</code> (rating_idx: <code>0</code>, <code>1</code>, <code>2</code>, <code>3</code>, <code>4</code>)",
+            unsafe_allow_html=True
+        )
+        bulk_text = st.text_area("Student List", height=120, key="q_bulk_text_area", placeholder="bl.sc.u4aie24001,amma,both\nbl.sc.u4aie24002,amma,both\nbl.sc.u4aie24003,amma,course")
+
+        b_c1, b_c2, b_c3 = st.columns([2, 2, 2])
+        with b_c1:
+            bulk_def_pwd = st.text_input("Default Password (if omitted)", value="amma", key="q_bulk_def_pwd")
+        with b_c2:
+            bulk_def_mode = st.selectbox("Default Mode", ["🔄 Both (Course + TLP)", "📘 Course Feedback", "📗 TLP Feedback"], key="q_bulk_def_mode")
+        with b_c3:
+            bulk_def_rating = st.selectbox("Default Rating", RATING_OPTIONS, index=1, key="q_bulk_def_rating")
+
+        b_btn1, b_btn2 = st.columns([1, 1])
+        with b_btn1:
+            bulk_add_btn = st.button("➕ Add All to Queue", key="q_bulk_add_btn", use_container_width=True)
+        with b_btn2:
+            bulk_clear_btn = st.button("🗑 Clear Queue", key="q_bulk_clear_btn", use_container_width=True)
+
+        if bulk_add_btn and bulk_text.strip():
+            def_mode_code = "both" if "Both" in bulk_def_mode else ("course" if "Course" in bulk_def_mode else "tlp")
+            lines = [l.strip() for l in bulk_text.strip().splitlines() if l.strip() and not l.strip().startswith("#")]
+            q_list = st.session_state.get("myamrita_queue_list", [])
+            added_cnt = 0
+            for line in lines:
+                parts = [p.strip() for p in line.replace(":", ",").split(",") if p.strip()]
+                if not parts:
+                    continue
+                em = myamrita_queue.normalize_email(parts[0])
+                pwd = parts[1] if len(parts) > 1 else bulk_def_pwd
+                m_code = parts[2].lower() if len(parts) > 2 else def_mode_code
+                if m_code not in ("both", "course", "tlp"):
+                    m_code = def_mode_code
+                m_label = "🔄 Both (Course + TLP)" if m_code == "both" else ("📘 Course Feedback" if m_code == "course" else "📗 TLP Feedback")
+                r_label = bulk_def_rating
+                if len(parts) > 3 and parts[3].isdigit():
+                    idx_val = int(parts[3])
+                    for opt in RATING_OPTIONS:
+                        if f"({idx_val})" in opt:
+                            r_label = opt
+                            break
+                q_list.append({
+                    "#": len(q_list) + 1,
+                    "Email / Roll": em,
+                    "password": pwd,
+                    "mode": m_code,
+                    "Portal Mode": m_label,
+                    "Rating": r_label,
+                    "Status": "⏳ Queued"
+                })
+                added_cnt += 1
+            st.session_state["myamrita_queue_list"] = q_list
+            st.session_state["q_bulk_text_area"] = ""
+            st.success(f"Added {added_cnt} students to queue!")
+            st.rerun()
+
+        if bulk_clear_btn:
+            st.session_state["myamrita_queue_list"] = []
+            st.rerun()
+
+    # Queue controls: delay and start/stop
+    q_ctrl1, q_ctrl2, q_ctrl3 = st.columns([2, 2, 2])
+    with q_ctrl1:
+        q_delay = st.number_input("Delay Between Students (sec)", min_value=0.5, max_value=15.0, value=2.0, step=0.5, key="q_delay_input")
+    with q_ctrl2:
+        q_start_btn = st.button(
+            "🚀 Start Queue Execution",
+            disabled=st.session_state.get("is_myamrita_queue_running", False) or len(st.session_state.get("myamrita_queue_list", [])) == 0,
+            key="q_start_btn",
+            use_container_width=True
+        )
+    with q_ctrl3:
+        q_cancel_btn = st.button(
+            "⏹ Stop / Cancel Queue",
+            disabled=not st.session_state.get("is_myamrita_queue_running", False),
+            key="q_cancel_btn",
+            use_container_width=True
+        )
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    if q_cancel_btn:
+        if st.session_state.get("user_config_queue"):
+            try:
+                st.session_state["user_config_queue"].put_nowait("CANCEL")
+            except Exception:
+                pass
+        st.session_state["log_lines"].append("🛑 MyAmrita queue cancellation requested by user...")
+        st.rerun()
+
+    if q_start_btn:
+        q_items_raw = st.session_state.get("myamrita_queue_list", [])
+        if not q_items_raw:
+            st.error("Queue is empty. Please add students first.")
+        else:
+            new_run_id = st.session_state.get("run_id", 0) + 1
+            st.session_state["run_id"] = new_run_id
+            st.session_state["log_lines"] = []
+            st.session_state["done"] = False
+            st.session_state["is_myamrita_queue_running"] = True
+            st.session_state["running"] = True
+            st.session_state["user_config_queue"] = queue.Queue()
+
+            # Reset statuses in queue list
+            for item in q_items_raw:
+                item["Status"] = "⏳ Queued"
+
+            st.session_state["myamrita_queue_stats"] = {
+                "total": len(q_items_raw),
+                "success": 0,
+                "failed": 0,
+                "processed": 0
+            }
+
+            for _lgr in (tlp.logger, course.logger, vidya.logger, myamrita_queue.logger):
+                for _h in _lgr.handlers:
+                    if hasattr(_h, "run_id"):
+                        _h.run_id = new_run_id
+
+            _ui_q = st.session_state["ui_queue"]
+            _cq   = st.session_state["user_config_queue"]
+
+            prepared_items = []
+            for item in q_items_raw:
+                prepared_items.append({
+                    "email": item["Email / Roll"],
+                    "password": item["password"],
+                    "mode": item["mode"],
+                    "answer_idx": parse_rating(item["Rating"]),
+                })
+
+            t = threading.Thread(
+                target=run_asyncio_myamrita_queue_loop,
+                args=(new_run_id, prepared_items, float(q_delay), _ui_q, _cq),
+                daemon=True,
+            )
+            t.start()
+            st.rerun()
+
+    # Step 2: Queue Table & Status
+    st.markdown('<div class="card"><div class="card-title">Step 2 — MyAmrita Queue Status</div>', unsafe_allow_html=True)
+    q_stats = st.session_state.get("myamrita_queue_stats", {})
+    q_tot = q_stats.get("total", len(st.session_state.get("myamrita_queue_list", [])))
+    q_succ = q_stats.get("success", 0)
+    q_fail = q_stats.get("failed", 0)
+    q_proc = q_stats.get("processed", 0)
+
+    qm1, qm2, qm3 = st.columns(3)
+    qm1.metric("👥 Total Students", q_tot)
+    qm2.metric("✅ Successfully Completed", q_succ)
+    qm3.metric("❌ Failed / Error", q_fail)
+
+    if q_tot > 0:
+        st.progress(min(1.0, q_proc / q_tot))
+
+    if st.session_state.get("myamrita_queue_list"):
+        display_rows = [
+            {"#": item["#"], "Student Email / Roll": item["Email / Roll"], "Mode": item["Portal Mode"], "Rating": item["Rating"], "Status": item["Status"]}
+            for item in st.session_state["myamrita_queue_list"]
+        ]
+        st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
+    else:
+        st.markdown('<p style="color:#7c85a2;font-size:.85rem;text-align:center;padding:24px 0;">Queue is empty. Add students above and click Start Queue Execution.</p>', unsafe_allow_html=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -876,6 +1182,9 @@ st.markdown(log_html, unsafe_allow_html=True)
 if st.session_state["done"]:
     if is_batch_mode:
         st.success(f"🎉 Batch submission complete! Processed {proc_cnt}/{tot} students.")
+    elif is_queue_mode:
+        q_st = st.session_state.get("myamrita_queue_stats", {})
+        st.success(f"🎉 MyAmrita queue complete! Processed {q_st.get('processed', 0)}/{q_st.get('total', 0)} students.")
     else:
         if not st.session_state["subjects"]:
             st.info("🎉 No pending feedbacks found! You're all set.")
@@ -885,6 +1194,11 @@ if st.session_state["done"]:
 st.markdown("</div>", unsafe_allow_html=True)
 
 # ── Auto-rerun while bot is actively working in background ────────────────────
-if st.session_state.get("is_fetching", False) or st.session_state.get("is_submitting", False) or st.session_state.get("is_batch_running", False):
+if (
+    st.session_state.get("is_fetching", False)
+    or st.session_state.get("is_submitting", False)
+    or st.session_state.get("is_batch_running", False)
+    or st.session_state.get("is_myamrita_queue_running", False)
+):
     time.sleep(0.8)
     st.rerun()

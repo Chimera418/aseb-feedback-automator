@@ -12,6 +12,7 @@ import pygame
 import tlp     # TLP feedback script
 import course  # Course feedback script
 import vidya   # AmritaVidya (web-blr) feedback script
+import myamrita_queue  # Multi-student queue and Course+TLP chaining
 
 BATCH_RATING_OPTIONS = [
     "Very Good (1)",
@@ -63,6 +64,9 @@ class FeedbackGUI:
         self.user_config_queue = queue.Queue()
         self.subject_widgets = {}  # info -> {'status_label': lbl, 'rating_var': var, 'cb': cb}
         self.batch_tree_items = {} # username -> tree_item_id
+        self.queue_tree_items = {} # email -> tree_item_id
+        self.myamrita_queue_items = []
+        self.is_queue_running = False
         
         self.run_id = 0
         self.is_fetching = False
@@ -100,7 +104,7 @@ class FeedbackGUI:
         text_handler = TextHandler(self.log_text)
         formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', datefmt='%H:%M:%S')
         text_handler.setFormatter(formatter)
-        for lgr in (tlp.logger, course.logger, vidya.logger):
+        for lgr in (tlp.logger, course.logger, vidya.logger, myamrita_queue.logger):
             lgr.addHandler(text_handler)
             lgr.setLevel(logging.INFO)
 
@@ -115,20 +119,24 @@ class FeedbackGUI:
 
         self.mode_var = tk.StringVar(value="tlp")
         ttk.Radiobutton(mode_btn_frame, text="TLP Feedback", variable=self.mode_var, value="tlp",
-                        command=self.on_mode_change).pack(side=tk.LEFT, padx=(0, 15))
+                        command=self.on_mode_change).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Radiobutton(mode_btn_frame, text="Course Feedback", variable=self.mode_var, value="course",
-                        command=self.on_mode_change).pack(side=tk.LEFT, padx=(0, 15))
+                        command=self.on_mode_change).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Radiobutton(mode_btn_frame, text="🔄 Both (Course + TLP)", variable=self.mode_var, value="both",
+                        command=self.on_mode_change).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Radiobutton(mode_btn_frame, text="AmritaVidya Feedback", variable=self.mode_var, value="vidya",
                         command=self.on_mode_change).pack(side=tk.LEFT)
 
-        # AmritaVidya Submode (Single vs Batch)
-        self.submode_lbl = ttk.Label(header_frame, text="AmritaVidya Mode:")
+        # Execution Submode (Single vs Batch/Queue)
+        self.submode_lbl = ttk.Label(header_frame, text="Execution Mode:")
         self.submode_frame = ttk.Frame(header_frame)
-        self.vidya_submode_var = tk.StringVar(value="single")
-        ttk.Radiobutton(self.submode_frame, text="👤 Single Student", variable=self.vidya_submode_var, value="single",
-                        command=self.on_submode_change).pack(side=tk.LEFT, padx=(0, 15))
-        ttk.Radiobutton(self.submode_frame, text="⚡ Batch Submit Mode (Multiple Students)", variable=self.vidya_submode_var, value="batch",
-                        command=self.on_submode_change).pack(side=tk.LEFT)
+        self.submode_var = tk.StringVar(value="single")
+        self.submode_single_rb = ttk.Radiobutton(self.submode_frame, text="👤 Single Student", variable=self.submode_var, value="single",
+                        command=self.on_submode_change)
+        self.submode_single_rb.pack(side=tk.LEFT, padx=(0, 15))
+        self.submode_multi_rb = ttk.Radiobutton(self.submode_frame, text="⚡ Queue Mode (Multiple Students / Tasks)", variable=self.submode_var, value="multi",
+                        command=self.on_submode_change)
+        self.submode_multi_rb.pack(side=tk.LEFT)
 
         # ── Single Student Container ──────────────────────────────────────────
         self.single_container = ttk.Frame(self.root)
@@ -303,6 +311,112 @@ class FeedbackGUI:
                                            font=("Segoe UI", 9, "bold"))
         self.batch_summary_lbl.pack(anchor="w", pady=(2, 0))
 
+        # ── MyAmrita Queue Container (TLP / Course / Both Multi-Student) ─────
+        self.queue_container = ttk.Frame(self.root)
+
+        # Setup Frame
+        q_setup_frame = ttk.LabelFrame(self.queue_container, text="MyAmrita Queue Setup — Multi-Student & Task Queue", padding=(10, 8))
+        q_setup_frame.pack(fill=tk.X, pady=(0, 5))
+
+        # Row 1: Single Student Quick Add
+        q_add_row = ttk.Frame(q_setup_frame)
+        q_add_row.pack(fill=tk.X, pady=(0, 6))
+
+        ttk.Label(q_add_row, text="Email / Roll:").pack(side=tk.LEFT, padx=(0, 2))
+        self.q_email_var = tk.StringVar(value="")
+        self.q_email_entry = ttk.Entry(q_add_row, textvariable=self.q_email_var, width=28)
+        self.q_email_entry.pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(q_add_row, text="Password:").pack(side=tk.LEFT, padx=(6, 2))
+        self.q_pass_var = tk.StringVar(value="")
+        self.q_pass_entry = ttk.Entry(q_add_row, textvariable=self.q_pass_var, show="*", width=14)
+        self.q_pass_entry.pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(q_add_row, text="Mode:").pack(side=tk.LEFT, padx=(6, 2))
+        self.q_mode_var = tk.StringVar(value="Both (Course + TLP)")
+        self.q_mode_cb = ttk.Combobox(q_add_row, textvariable=self.q_mode_var, state="readonly", width=18)
+        self.q_mode_cb['values'] = ["Both (Course + TLP)", "Course Feedback", "TLP Feedback"]
+        self.q_mode_cb.pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(q_add_row, text="Rating:").pack(side=tk.LEFT, padx=(6, 2))
+        self.q_rating_var = tk.StringVar(value="Very Good (1)")
+        self.q_rating_cb = ttk.Combobox(q_add_row, textvariable=self.q_rating_var, state="readonly", width=13)
+        self.q_rating_cb['values'] = SINGLE_RATING_OPTIONS
+        self.q_rating_cb.pack(side=tk.LEFT, padx=2)
+
+        ttk.Button(q_add_row, text="➕ Add to Queue", command=self.add_single_to_queue).pack(side=tk.LEFT, padx=8)
+
+        # Row 2: Bulk Add from text
+        q_bulk_row = ttk.Frame(q_setup_frame)
+        q_bulk_row.pack(fill=tk.X, pady=2)
+
+        q_bulk_left = ttk.Frame(q_bulk_row)
+        q_bulk_left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.q_count_lbl = ttk.Label(q_bulk_left, text="Bulk Add (paste one per line: roll,password or email,password):", font=("Segoe UI", 8))
+        self.q_count_lbl.pack(anchor="w")
+
+        q_txt_scroll_f = ttk.Frame(q_bulk_left)
+        q_txt_scroll_f.pack(fill=tk.BOTH, expand=True, pady=2)
+        self.q_bulk_text = tk.Text(q_txt_scroll_f, height=3, width=40, font=("Consolas", 9))
+        self.q_bulk_scroll = ttk.Scrollbar(q_txt_scroll_f, command=self.q_bulk_text.yview)
+        self.q_bulk_text.configure(yscrollcommand=self.q_bulk_scroll.set)
+        self.q_bulk_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.q_bulk_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        q_bulk_right = ttk.Frame(q_bulk_row)
+        q_bulk_right.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 5))
+
+        ttk.Button(q_bulk_right, text="📋 Queue All from Text", command=self.add_bulk_to_queue).pack(fill=tk.X, pady=1)
+        ttk.Button(q_bulk_right, text="🗑 Clear Queue", command=self.clear_queue).pack(fill=tk.X, pady=1)
+
+        # Queue Progress & Table Frame
+        self.queue_list_frame = ttk.LabelFrame(self.queue_container, text="Queue Execution Progress", padding=(10, 8))
+        self.queue_list_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        q_tree_frame = ttk.Frame(self.queue_list_frame)
+        q_tree_frame.pack(fill=tk.BOTH, expand=True)
+
+        q_columns = ("num", "email", "mode", "rating", "status")
+        self.queue_tree = ttk.Treeview(q_tree_frame, columns=q_columns, show="headings", height=7)
+        self.queue_tree.heading("num", text="#")
+        self.queue_tree.heading("email", text="Student Email")
+        self.queue_tree.heading("mode", text="Mode")
+        self.queue_tree.heading("rating", text="Rating")
+        self.queue_tree.heading("status", text="Status")
+
+        self.queue_tree.column("num", width=35, anchor="center")
+        self.queue_tree.column("email", width=250, anchor="w")
+        self.queue_tree.column("mode", width=160, anchor="center")
+        self.queue_tree.column("rating", width=110, anchor="center")
+        self.queue_tree.column("status", width=220, anchor="w")
+
+        q_tree_scroll_y = ttk.Scrollbar(q_tree_frame, orient="vertical", command=self.queue_tree.yview)
+        self.queue_tree.configure(yscrollcommand=q_tree_scroll_y.set)
+        self.queue_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        q_tree_scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Controls & Progress
+        q_ctrl_row = ttk.Frame(self.queue_list_frame)
+        q_ctrl_row.pack(fill=tk.X, pady=(6, 2))
+
+        self.queue_start_btn = ttk.Button(q_ctrl_row, text="🚀 Start Queue Execution", command=self.start_queue_execution)
+        self.queue_start_btn.pack(side=tk.LEFT, padx=(0, 8), ipadx=8, ipady=3)
+
+        self.queue_cancel_btn = ttk.Button(q_ctrl_row, text="⏹ Stop Queue", command=self.cancel_queue_action, state=tk.DISABLED)
+        self.queue_cancel_btn.pack(side=tk.LEFT, padx=4, ipadx=6, ipady=3)
+
+        ttk.Label(q_ctrl_row, text="Delay (sec):").pack(side=tk.LEFT, padx=(15, 2))
+        self.q_delay_var = tk.DoubleVar(value=2.0)
+        self.q_delay_sp = ttk.Spinbox(q_ctrl_row, from_=0.0, to=10.0, increment=0.5, textvariable=self.q_delay_var, width=6)
+        self.q_delay_sp.pack(side=tk.LEFT, padx=2)
+
+        self.queue_progress_bar = ttk.Progressbar(self.queue_list_frame, mode="determinate")
+        self.queue_progress_bar.pack(fill=tk.X, pady=(6, 2))
+
+        self.queue_summary_lbl = ttk.Label(self.queue_list_frame, text="Queue is empty. Add students above and click 'Start Queue Execution'.", font=("Segoe UI", 9, "bold"))
+        self.queue_summary_lbl.pack(anchor="w", pady=(2, 0))
+
         # ── Bottom Frame: Shared Activity Log ─────────────────────────────────
         self.log_frame = ttk.LabelFrame(self.root, text="Activity Log", padding=(10, 8))
         self.log_frame.pack(side=tk.BOTTOM, fill=tk.BOTH, expand=True, padx=10, pady=5)
@@ -318,9 +432,15 @@ class FeedbackGUI:
         if mode == "vidya":
             self.email_label.config(text="Vidya Username:")
             self.email_var.set(vidya.VIDYA_USERNAME)
+            self.fetch_btn.config(text="🔍 Fetch Subjects")
+        elif mode == "both":
+            self.email_label.config(text="Amrita Email:")
+            self.email_var.set(tlp.OUTLOOK_EMAIL)
+            self.fetch_btn.config(text="🚀 Run Both (Course + TLP)")
         else:
             self.email_label.config(text="Amrita Email:")
             self.email_var.set(tlp.OUTLOOK_EMAIL)
+            self.fetch_btn.config(text="🔍 Fetch Subjects")
 
         # Cancel any active single-mode task
         if self.awaiting_submit:
@@ -335,7 +455,6 @@ class FeedbackGUI:
             for widget in self.subjects_inner_frame.winfo_children():
                 widget.destroy()
             self.subject_widgets.clear()
-            self.fetch_btn.config(state=tk.NORMAL, text="🔍 Fetch Subjects")
             self.cancel_btn.config(state=tk.DISABLED)
             self.submit_btn.config(state=tk.DISABLED)
 
@@ -346,21 +465,33 @@ class FeedbackGUI:
 
     def update_submode_visibility(self):
         mode = self.mode_var.get()
-        if mode == "vidya":
-            self.submode_lbl.grid(row=1, column=0, sticky=tk.W, pady=2)
-            self.submode_frame.grid(row=1, column=1, sticky=tk.W, pady=2, padx=5)
+        submode = self.submode_var.get()
 
-            if self.vidya_submode_var.get() == "batch":
+        self.submode_lbl.grid(row=1, column=0, sticky=tk.W, pady=2)
+        self.submode_frame.grid(row=1, column=1, sticky=tk.W, pady=2, padx=5)
+
+        if mode == "vidya":
+            self.submode_lbl.config(text="AmritaVidya Mode:")
+            self.submode_multi_rb.config(text="⚡ Batch Submit Mode (Multiple Students)")
+            if submode == "multi":
                 self.single_container.pack_forget()
+                self.queue_container.pack_forget()
                 self.batch_container.pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=10, pady=5, before=self.log_frame)
             else:
                 self.batch_container.pack_forget()
+                self.queue_container.pack_forget()
                 self.single_container.pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=10, pady=5, before=self.log_frame)
         else:
-            self.submode_lbl.grid_remove()
-            self.submode_frame.grid_remove()
-            self.batch_container.pack_forget()
-            self.single_container.pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=10, pady=5, before=self.log_frame)
+            self.submode_lbl.config(text="MyAmrita Mode:")
+            self.submode_multi_rb.config(text="⚡ Queue Mode (Multiple Students / Tasks)")
+            if submode == "multi":
+                self.single_container.pack_forget()
+                self.batch_container.pack_forget()
+                self.queue_container.pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=10, pady=5, before=self.log_frame)
+            else:
+                self.batch_container.pack_forget()
+                self.queue_container.pack_forget()
+                self.single_container.pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=10, pady=5, before=self.log_frame)
 
     def generate_batch_range(self):
         prefix = self.batch_prefix_var.get().strip()
@@ -467,17 +598,30 @@ class FeedbackGUI:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            module_to_run = {"tlp": tlp, "course": course, "vidya": vidya}[mode]
-            loop.run_until_complete(
-                module_to_run.run(
-                    email=email,
-                    password=password,
-                    answer_idx=default_idx,
-                    headless=True,
-                    progress_callback=lambda etype, data: self.handle_progress(run_id, etype, data),
-                    user_config_queue=user_config_queue
+            if mode == "both":
+                loop.run_until_complete(
+                    myamrita_queue.run_single_chained(
+                        email=email,
+                        password=password,
+                        mode="both",
+                        answer_idx=default_idx,
+                        headless=True,
+                        progress_callback=lambda etype, data: self.handle_progress(run_id, etype, data),
+                        user_config_queue=user_config_queue,
+                    )
                 )
-            )
+            else:
+                module_to_run = {"tlp": tlp, "course": course, "vidya": vidya}[mode]
+                loop.run_until_complete(
+                    module_to_run.run(
+                        email=email,
+                        password=password,
+                        answer_idx=default_idx,
+                        headless=True,
+                        progress_callback=lambda etype, data: self.handle_progress(run_id, etype, data),
+                        user_config_queue=user_config_queue
+                    )
+                )
         except Exception as e:
             tlp.logger.error(f"Fatal error in automation loop: {e}")
         finally:
@@ -501,6 +645,159 @@ class FeedbackGUI:
         self.cancel_btn.config(state=tk.NORMAL)
         tlp.logger.info("GUI: Ratings locked in. Resuming bot execution...")
         self.user_config_queue.put(config)
+
+    # ── MyAmrita Queue Actions ────────────────────────────────────────────────
+    def add_single_to_queue(self):
+        email_or_roll = self.q_email_var.get().strip()
+        pwd = self.q_pass_var.get().strip()
+        if not email_or_roll or not pwd:
+            messagebox.showerror("Missing Information", "Please enter Email/Roll Number and Password.")
+            return
+
+        mode_choice = self.q_mode_var.get()
+        if "Both" in mode_choice:
+            mode_key = "both"
+        elif "Course" in mode_choice:
+            mode_key = "course"
+        else:
+            mode_key = "tlp"
+
+        rating_str = self.q_rating_var.get()
+        answer_idx = self.parse_rating(rating_str)
+        norm_email = myamrita_queue.normalize_email(email_or_roll)
+
+        item = {
+            "email": norm_email,
+            "password": pwd,
+            "mode": mode_key,
+            "mode_label": mode_choice,
+            "answer_idx": answer_idx,
+            "rating_str": rating_str,
+            "status": "⏳ Queued",
+        }
+        self.myamrita_queue_items.append(item)
+        idx = len(self.myamrita_queue_items)
+        row_id = self.queue_tree.insert("", tk.END, values=(idx, norm_email, mode_choice, rating_str, "⏳ Queued"))
+        self.queue_tree_items[norm_email] = row_id
+
+        self.q_email_var.set("")
+        self.q_pass_var.set("")
+        self.queue_summary_lbl.config(text=f"{len(self.myamrita_queue_items)} student(s) in queue. Click 'Start Queue Execution' to begin.")
+
+    def add_bulk_to_queue(self):
+        raw = self.q_bulk_text.get("1.0", tk.END).strip().splitlines()
+        default_pwd = self.q_pass_var.get().strip() or "amma"
+        mode_choice = self.q_mode_var.get()
+        if "Both" in mode_choice:
+            mode_key = "both"
+        elif "Course" in mode_choice:
+            mode_key = "course"
+        else:
+            mode_key = "tlp"
+
+        rating_str = self.q_rating_var.get()
+        answer_idx = self.parse_rating(rating_str)
+
+        added = 0
+        for line in raw:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = [p.strip() for p in line.replace(":", ",").split(",") if p.strip()]
+            user = parts[0]
+            pwd = parts[1] if len(parts) > 1 else default_pwd
+            norm_email = myamrita_queue.normalize_email(user)
+            if not norm_email or not pwd:
+                continue
+
+            item = {
+                "email": norm_email,
+                "password": pwd,
+                "mode": mode_key,
+                "mode_label": mode_choice,
+                "answer_idx": answer_idx,
+                "rating_str": rating_str,
+                "status": "⏳ Queued",
+            }
+            self.myamrita_queue_items.append(item)
+            idx = len(self.myamrita_queue_items)
+            row_id = self.queue_tree.insert("", tk.END, values=(idx, norm_email, mode_choice, rating_str, "⏳ Queued"))
+            self.queue_tree_items[norm_email] = row_id
+            added += 1
+
+        self.q_bulk_text.delete("1.0", tk.END)
+        self.queue_summary_lbl.config(text=f"{len(self.myamrita_queue_items)} student(s) in queue. Click 'Start Queue Execution' to begin.")
+
+    def clear_queue(self):
+        self.myamrita_queue_items.clear()
+        self.queue_tree_items.clear()
+        for item in self.queue_tree.get_children():
+            self.queue_tree.delete(item)
+        self.queue_summary_lbl.config(text="Queue cleared.")
+
+    def start_queue_execution(self):
+        if not self.myamrita_queue_items:
+            messagebox.showerror("Empty Queue", "No students queued! Add student roll numbers/emails above.")
+            return
+
+        self.run_id += 1
+        current_run_id = self.run_id
+        self.is_queue_running = True
+        self.user_config_queue = queue.Queue()
+
+        self.queue_start_btn.config(state=tk.DISABLED)
+        self.queue_cancel_btn.config(state=tk.NORMAL)
+        self.queue_progress_bar["maximum"] = len(self.myamrita_queue_items)
+        self.queue_progress_bar["value"] = 0
+
+        for em, row_id in self.queue_tree_items.items():
+            self.queue_tree.set(row_id, "status", "⏳ Queued")
+
+        try:
+            delay_sec = float(self.q_delay_var.get())
+        except Exception:
+            delay_sec = 2.0
+
+        items_copy = list(self.myamrita_queue_items)
+        tlp.logger.info(f"GUI: Launching MyAmrita Queue Execution for {len(items_copy)} students...")
+
+        thread = threading.Thread(
+            target=self.run_asyncio_queue_loop,
+            args=(current_run_id, items_copy, delay_sec, self.user_config_queue),
+            daemon=True
+        )
+        thread.start()
+        self.root.after(100, self.process_queue)
+
+    def cancel_queue_action(self):
+        try:
+            self.user_config_queue.put_nowait("CANCEL")
+        except Exception:
+            pass
+        self.queue_summary_lbl.config(text="Stopping queue after current student finishes...")
+        tlp.logger.info("GUI: 🛑 Stopping MyAmrita Queue execution...")
+
+    def run_asyncio_queue_loop(self, run_id, queue_items, delay_sec, cancel_queue):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(
+                myamrita_queue.run_queue(
+                    queue_items=queue_items,
+                    delay_between_students=delay_sec,
+                    headless=True,
+                    progress_callback=lambda etype, data: self.handle_progress(run_id, etype, data),
+                    cancel_queue=cancel_queue
+                )
+            )
+        except Exception as e:
+            tlp.logger.error(f"Fatal error in queue loop: {e}")
+        finally:
+            try:
+                loop.close()
+            except Exception:
+                pass
+            self.ui_queue.put((run_id, "queue_thread_done", None))
 
     # ── Batch Mode Actions ────────────────────────────────────────────────────
     def start_batch_submission(self):
@@ -775,10 +1072,76 @@ class FeedbackGUI:
                     self.batch_start_btn.config(state=tk.NORMAL)
                     self.batch_cancel_btn.config(state=tk.DISABLED)
 
+                # ── MyAmrita Queue Mode Events ────────────────────────────────
+                elif event_type == "queue_start":
+                    tot = data.get("total", len(self.myamrita_queue_items))
+                    self.queue_progress_bar["maximum"] = tot
+                    self.queue_progress_bar["value"] = 0
+                    self.queue_summary_lbl.config(text=f"Queue running: 0/{tot} processed...")
+
+                elif event_type == "queue_student_start":
+                    em = data["email"]
+                    idx = data["index"]
+                    tot = data["total"]
+                    if em in self.queue_tree_items:
+                        item_id = self.queue_tree_items[em]
+                        self.queue_tree.set(item_id, "status", f"🔐 Starting ({data.get('mode_label', '')})...")
+                        self.queue_tree.see(item_id)
+                    self.queue_summary_lbl.config(text=f"Processing [{idx}/{tot}]: {em}...")
+
+                elif event_type == "queue_student_step":
+                    em = data["email"]
+                    step_status = data["status"]
+                    if em in self.queue_tree_items:
+                        item_id = self.queue_tree_items[em]
+                        self.queue_tree.set(item_id, "status", step_status)
+
+                elif event_type == "queue_student_done":
+                    em = data["email"]
+                    if em in self.queue_tree_items:
+                        item_id = self.queue_tree_items[em]
+                        self.queue_tree.set(item_id, "status", "✅ Done")
+                    stats = data.get("stats", {})
+                    self.queue_progress_bar["value"] = stats.get("processed", self.queue_progress_bar["value"] + 1)
+                    self.queue_summary_lbl.config(text=f"Processed {stats.get('processed', 0)}/{stats.get('total', 0)} (✅ {stats.get('success', 0)} success, ❌ {stats.get('failed', 0)} failed)")
+
+                elif event_type == "queue_student_failed":
+                    em = data["email"]
+                    err = data.get("error", "Error")
+                    if em in self.queue_tree_items:
+                        item_id = self.queue_tree_items[em]
+                        self.queue_tree.set(item_id, "status", f"❌ Failed ({err[:35]})")
+                    stats = data.get("stats", {})
+                    self.queue_progress_bar["value"] = stats.get("processed", self.queue_progress_bar["value"] + 1)
+                    self.queue_summary_lbl.config(text=f"Processed {stats.get('processed', 0)}/{stats.get('total', 0)} (✅ {stats.get('success', 0)} success, ❌ {stats.get('failed', 0)} failed)")
+
+                elif event_type == "queue_complete":
+                    stats = data
+                    self.is_queue_running = False
+                    self.queue_start_btn.config(state=tk.NORMAL)
+                    self.queue_cancel_btn.config(state=tk.DISABLED)
+                    if stats.get("cancelled"):
+                        self.queue_summary_lbl.config(text=f"Queue stopped. {stats.get('success', 0)}/{stats.get('total', 0)} completed.")
+                        messagebox.showinfo("Stopped", "MyAmrita Queue was stopped by user.")
+                    else:
+                        self.queue_summary_lbl.config(text=f"🎉 Queue Complete! Total: {stats.get('total', 0)} | ✅ Success: {stats.get('success', 0)} | ❌ Failed: {stats.get('failed', 0)}")
+                        messagebox.showinfo(
+                            "Queue Complete",
+                            f"MyAmrita Queue Execution Complete!\n\n"
+                            f"Total Students: {stats.get('total', 0)}\n"
+                            f"✅ Succeeded: {stats.get('success', 0)}\n"
+                            f"❌ Failed: {stats.get('failed', 0)}"
+                        )
+
+                elif event_type == "queue_thread_done":
+                    self.is_queue_running = False
+                    self.queue_start_btn.config(state=tk.NORMAL)
+                    self.queue_cancel_btn.config(state=tk.DISABLED)
+
         except queue.Empty:
             pass
 
-        if self.is_fetching or self.is_submitting or self.awaiting_submit or self.is_batch_running:
+        if self.is_fetching or self.is_submitting or self.awaiting_submit or self.is_batch_running or self.is_queue_running:
             self.root.after(100, self.process_queue)
 
 
