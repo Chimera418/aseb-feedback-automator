@@ -1,0 +1,6 @@
+-keep class edu.amrita.feedbackautomater.** { *; }
+-dontwarn org.jsoup.**
+-dontwarn okhttp3.**
+-dontwarn okio.**
+-keepattributes Signature, InnerClasses, EnclosingMethod
+-keep class org.jsoup.nodes.** { *; }

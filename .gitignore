@@ -6,10 +6,12 @@ venv/
 .venv/
 logs/
 images/
-
 skills/
+.vscode/
+.env
+.env.*
 
-# Android build artifacts & local secrets
+# Android build artifacts & local secrets (NEVER commit!)
 android-app/local.properties
 android-app/.gradle/
 android-app/build/
@@ -17,7 +19,10 @@ android-app/app/build/
 android-app/.idea/
 *.jks
 *.keystore
+*.p12
+*.pem
+*.apk
+*.aab
 
-
-android-app/
-logging-server/
+# Allow Android app icon & drawable PNGs inside res/
+!android-app/app/src/main/res/**/*.png

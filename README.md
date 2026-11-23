@@ -3,38 +3,70 @@
 ## 💖 Credits
 * **[@Shaenpai24](https://github.com/Shaenpai24)**: The entire project was his original idea, and he developed the initial basic script that laid the foundation for this automater.
 
-An automated, end-to-end tool to handle the tedious process of submitting feedback on the MyAmrita Student Portal and the older AmritaVidya Student Feedback System.
+An automated, end-to-end tool to handle the tedious process of submitting feedback on the **MyAmrita Student Portal** (`TLP` & `Course` feedback) and the **AmritaVidya** Student Feedback System (`web-blr.amrita.edu/amritavidya`).
 
-This project uses **Playwright** for browser automation to navigate the portals, handle OTP verifications through Outlook, and fill out feedback forms based on user-defined ratings. It includes both a **Tkinter** desktop GUI and a **Streamlit** web app interface.
+Available as a **native Android app** (100% on-device), plus **Streamlit** web and **Tkinter** desktop apps for PC.
 
-## 🌟 Features
+---
 
-* **Three Modes**: **TLP Feedback** and **Course Feedback** (OTP-first workflow) on the MyAmrita portal, plus **AmritaVidya Feedback** on the older `web-blr.amrita.edu/amritavidya` Student Feedback System (username/password only, no OTP).
+## 📱 Android App — Amrita Feedback Automater
+
+Run everything directly on your Android phone — no PC, no Playwright, no cloud servers, and no campus IP blocks.
+
+### ⬇️ Download APK
+Grab the latest signed APK from [**GitHub Releases →**](https://github.com/Chimera418/aseb-feedback-automator/releases/latest)
+
+1. Download `Amrita-Feedback-Automater-v1.1.0.apk` on your Android phone (Android 8.0+).
+2. Tap the APK to install (enable *"Install unknown apps"* for your browser/file manager if prompted).
+
+### ✨ Android Features
+* **100% On-Device & Private**: Runs natively on your phone's own network. Passwords, sign-in cookies, and Outlook OTPs never leave your device and are never saved to disk.
+* **All Four Modes**: **TLP**, **Course**, **Course + TLP**, and **AmritaVidya** (fast direct HTTP — no browser overhead).
+* **Queue & Batch Modes**:
+  * **MyAmrita Queue**: Run TLP / Course / Both sequentially across multiple students with isolated sessions.
+  * **AmritaVidya Batch**: Built-in roll number range generator (e.g. `bl.sc.u4aie24` `101` → `160`), bulk paste support, and randomized rating schemes.
+* **Smart Roll Conversion**: Pasting an email like `bl.sc.u4aie24103@bl.students.amrita.edu` into AmritaVidya automatically converts it to `bl.sc.u4aie24103`.
+* **Background Execution**: Uses an Android foreground service with live progress & finish notifications so long batches continue with the screen off or while using other apps.
+* **Native Material 3 UI**: Follows your phone's light/dark theme with `#BF0C4F` Amrita accent, live activity log, and completion summary popup.
+
+### 🛠️ Build the Android App from Source
+See [`android-app/README.md`](android-app/README.md) for Android Studio & Gradle build instructions.
+
+---
+
+## 💻 Desktop & Web App (Python + Playwright)
+
+The desktop/web version uses **Playwright** for browser automation to navigate the portals, handle OTP verifications through Outlook, and fill out feedback forms based on user-defined ratings. It includes both a **Streamlit** web app and a **Tkinter** desktop GUI.
+
+### 🌟 Features
+
+* **Four Modes**: **TLP Feedback**, **Course Feedback** (OTP-first workflow), **Both (Course + TLP)** on the MyAmrita portal, plus **AmritaVidya Feedback** on `web-blr.amrita.edu/amritavidya` (username/password only, no OTP).
+* **Queue & Batch Modes**: Multi-student sequential queue for MyAmrita and batch range submission for AmritaVidya.
 * **Automated OTP Handling**: Automatically logs into your Amrita Outlook email via Microsoft SSO, waits for the OTP email, extracts the 6-digit code, and verifies it on the portal.
-* **Smart Polling**: Uses robust DOM-mutation polling and Javascript-alert handling to navigate through multi-step forms quickly and reliably, bypassing slow network timeouts.
-* **Per-Subject Ratings**: Fetches all pending subjects and allows you to set individual ratings (Excellent, Very Good, Good, etc.) for each course/faculty before locking in the submission.
-* **Verified Submissions** (AmritaVidya): After each form, the feedback list is reloaded to confirm the course no longer shows "Enter Feedback" — anything that silently fails is reported as ❌ Failed instead of a false ✅.
-* **Dry Run** (AmritaVidya): Fill every form and screenshot it *without* submitting, so you can check the answers before anything becomes permanent.
-* **Live Logging**: Real-time activity log showing exactly what the bot is doing behind the scenes.
-* **Headless Browser**: Runs entirely in the background without stealing mouse focus or opening visible windows.
+* **Smart Polling**: Uses robust DOM-mutation polling and Javascript-alert handling to navigate through multi-step forms quickly and reliably.
+* **Per-Subject Ratings**: Fetches all pending subjects and lets you set individual ratings (Excellent, Very Good, Good, etc.) before locking in submission.
+* **Verified Submissions** (AmritaVidya): Reloads the feedback list after every form to confirm the course flipped off "Enter Feedback".
+* **Dry Run** (AmritaVidya): Fill every form and screenshot it *without* submitting.
+* **Live Logging & Headless Browser**: Runs quietly in the background with a real-time activity log.
 
 ### Mode comparison
 
 | | TLP Feedback | Course Feedback | AmritaVidya Feedback |
 |---|---|---|---|
 | Site | `students.amrita.edu` | `students.amrita.edu` | `web-blr.amrita.edu/amritavidya` |
-| Module | [`tlp.py`](tlp.py) | [`course.py`](course.py) | [`vidya.py`](vidya.py) |
-| Login | Microsoft SSO | Microsoft SSO | Username + password |
+| Python Module | [`tlp.py`](tlp.py) | [`course.py`](course.py) | [`vidya.py`](vidya.py) |
+| Android Engine | `WebView` + JS | `WebView` + JS | Native `OkHttp` + `Jsoup` |
+| Login | Microsoft SSO | Microsoft SSO | Roll number + password |
 | OTP | On finish | Before the form | None |
 | Form | Multi-step, one question per page | Multi-step, one question per page | Single page, 9 questions |
 
-## 🛠️ Prerequisites
+### 🛠️ Prerequisites (Desktop / Web)
 
 * **Python 3.8+**
 * Google Chrome or Chromium installed.
-* For **AmritaVidya** mode: network access to `web-blr.amrita.edu` (campus network or VPN).
+* For **AmritaVidya** mode: network access to `web-blr.amrita.edu` (home/mobile/campus network — cloud datacenter IPs are blocked by campus firewall).
 
-## 📦 Installation
+### 📦 Installation (Desktop / Web)
 
 1. **Clone the repository:**
    ```bash
@@ -51,74 +83,60 @@ This project uses **Playwright** for browser automation to navigate the portals,
    source venv/bin/activate
    ```
 
-3. **Install the dependencies:**
+3. **Install dependencies & Playwright Chromium:**
    ```bash
    pip install -r requirements.txt
-   ```
-
-4. **Install Playwright Browsers:**
-   ```bash
    playwright install chromium
    ```
 
-## 🚀 Usage
+### 🚀 Usage (Desktop / Web)
 
-You can run the automater using either the Desktop GUI or the Streamlit Web App.
-
-### Option A: Streamlit Web App (Recommended)
-Launch the modern, responsive web interface:
+#### Option A: Streamlit Web App (Recommended)
 ```bash
 python -m streamlit run app.py
 ```
-*The app will automatically open in your default browser at `http://localhost:8501` (or similar).*
 
-### Option B: Desktop GUI (Tkinter)
-Launch the classic desktop application:
+#### Option B: Desktop GUI (Tkinter)
 ```bash
 python gui.py
 ```
 
-### Option C: AmritaVidya from the command line
-Useful for checking the forms before committing to them. `--dry-run` fills everything but never submits, and `--show` opens a visible browser:
+#### Option C: AmritaVidya CLI
 ```bash
 python vidya.py --dry-run --show
 ```
 Screenshots of every filled form land in `images/vidya_dryrun_subject_*.png`. Drop the flags to submit for real with the default rating.
 
 > [!WARNING]
-> Without `--dry-run`, `vidya.py` submits every pending feedback immediately using the default rating — there is no confirmation step. Use the GUI or Streamlit app if you want to pick ratings per subject.
+> Without `--dry-run`, `vidya.py` submits every pending feedback immediately using the default rating — there is no confirmation step. Use the Android app, GUI, or Streamlit app if you want to review or configure ratings first.
+
+---
 
 ## 🔑 Credentials
 
 | Mode | Username | Password |
 |---|---|---|
-| TLP / Course | Your Amrita email (`bl.sc.u4aieXXXXX@bl.students.amrita.edu`) | Your Microsoft password |
-| AmritaVidya | Your roll-number login (`bl.sc.u4aieXXXXX`, no domain) | Your AmritaVidya password — defaults to `amma` if left blank |
+| TLP / Course | Your Amrita email (`bl.sc.u4aieXXXXX@bl.students.amrita.edu`) or roll number | Your Microsoft password |
+| AmritaVidya | Your roll number (`bl.sc.u4aieXXXXX` — emails are auto-trimmed on Android) | Your AmritaVidya password — defaults to `amma` if left blank |
 
-Both can also be set via environment variables: `OUTLOOK_EMAIL`, `VIDYA_USERNAME`, `VIDYA_PASSWORD`, plus `ANSWER_OPTION_INDEX`, `HEADLESS`, and `DRY_RUN`.
+On Desktop/CLI, credentials and options can also be set via environment variables: `OUTLOOK_EMAIL`, `VIDYA_USERNAME`, `VIDYA_PASSWORD`, `ANSWER_OPTION_INDEX`, `HEADLESS`, and `DRY_RUN`.
 
 > [!NOTE]
-> `amma` is only the factory default on AmritaVidya. If a student has changed their password, login fails and the log will quote the portal's own message: *"Invalid User name or password."*
+> `amma` is only the factory default on AmritaVidya. If a student has changed their password, login fails and the log will report the portal's error message.
 
-## 🧠 How it Works
-1. **Login & Fetch**: You provide your credentials. The bot logs into the portal and scrapes the feedback list to find every subject still marked pending.
-2. **Assign Ratings**: The UI presents a list of pending subjects. You can choose a custom rating for each one.
-3. **Submit**: Once you click submit, the bot iterates through each subject.
-   - For **Course Feedback**, it clicks "Send OTP", logs into your Outlook, reads the OTP, and enters it.
-   - For **TLP** and **Course**, it then loops through every question, selects the radio button matching your chosen rating, and clicks "Save & Next" until the form is complete — finally handling the Javascript confirmation alert and clicking "Finish".
-   - For **AmritaVidya**, the whole form is one page: it groups the radio buttons by question, clamps your rating to each question's option count (questions have 4 or 5 options), submits, then reloads the list to confirm the row flipped to "Submitted".
-4. **Failures are isolated**: If one subject errors out, it is screenshotted into `images/`, marked ❌ Failed in the UI, and the bot moves on to the next one.
+## 🔒 Privacy & Security
 
-Logs are written to `logs/` (`feedback_bot.log`, `course_feedback_bot.log`, `vidya_feedback_bot.log`) and error/dry-run screenshots to `images/`.
+* **No credential storage or transmission**: Passwords, Microsoft SSO cookies, and Outlook OTPs are processed strictly locally on your phone or PC and are never written to disk or sent to any third-party server.
+* **Secrets excluded from Git**: `android-app/local.properties`, `*.jks`, `*.keystore`, and `.env` files are git-ignored so signing keys and optional webhook URLs are never committed.
 
 ## ⚠️ Disclaimer
 
 > [!IMPORTANT]
 > **Why this exists:** Made this because manually doing feedback was a pain in the ass.
-> 
-> **Reliability:** It might not work sometimes because the MyAmrita website is so unstable and constantly hits 504 errors. AmritaVidya is far more stable, but only reachable from the campus network.
 >
-> **Ratings are yours:** The bot picks whatever option you tell it to — it does not decide the answers for you, and submitted feedback cannot be undone.
+> **Reliability:** MyAmrita occasionally returns 504 errors during peak traffic. AmritaVidya is far more stable when run directly from your phone or local PC.
+>
+> **Ratings are yours:** The tool selects whatever rating scheme you choose — submitted feedback cannot be undone.
 
 <div align="center">
   <img src="https://media.tenor.com/2XyX9r36G_MAAAAC/cat-dance.gif" alt="Dancing Cat" width="200"/>

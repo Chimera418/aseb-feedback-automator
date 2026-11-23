@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.AmritaFeedback" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/window_bg</item>
+    </style>
+
+    <style name="Theme.AmritaFeedback.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/splash_bg</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_fg_art</item>
+        <item name="postSplashScreenTheme">@style/Theme.AmritaFeedback</item>
+    </style>
+
+    <color name="splash_bg">#BF0C4F</color>
+    <color name="window_bg">#FBF8F8</color>
+</resources>
