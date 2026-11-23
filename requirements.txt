@@ -1,3 +1,4 @@
 playwright
 streamlit
 pandas
+pygame
