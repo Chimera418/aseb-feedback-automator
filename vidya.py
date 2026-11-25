@@ -45,6 +45,12 @@ LOGIN_URL = BASE_URL + "main_login.php"
 FEEDBACK_URL = BASE_URL + "feedback_home.php"
 
 
+def normalize_vidya_roll(raw: str) -> str:
+    """Converts a full Amrita email like bl.sc.u4aie24103@bl.students.amrita.edu to roll number bl.sc.u4aie24103."""
+    s = (raw or "").strip()
+    return s.split("@", 1)[0].strip() if "@" in s else s
+
+
 def set_target_host(host_or_ip: str) -> str:
     """
     Dynamically switch portal target to domain name or direct IP:
@@ -279,14 +285,22 @@ async def submit_feedback(page: Page, subject_num: int, dry_run: bool = False) -
 
     async def handle_dialog(dialog):
         logger.info(f"...Dialog: {dialog.message}. Accepting.")
-        await dialog.accept()
+        try:
+            await dialog.accept()
+        except Exception:
+            pass
 
     page.on("dialog", handle_dialog)
-
-    submit = page.locator(SEL["form_submit"]).last
-    await submit.click(timeout=15000)
-    await page.wait_for_load_state("domcontentloaded", timeout=30000)
-    await page.wait_for_timeout(500)
+    try:
+        submit = page.locator(SEL["form_submit"]).last
+        await submit.click(timeout=15000)
+        await page.wait_for_load_state("domcontentloaded", timeout=30000)
+        await page.wait_for_timeout(500)
+    finally:
+        try:
+            page.remove_listener("dialog", handle_dialog)
+        except Exception:
+            pass
 
 
 async def verify_submitted(page: Page, code: str) -> None:
@@ -312,7 +326,7 @@ async def run(
     if target_host:
         set_target_host(target_host)
 
-    username = (email or VIDYA_USERNAME).strip()
+    username = normalize_vidya_roll(email or VIDYA_USERNAME)
     final_password = password or VIDYA_PASSWORD
     final_answer_idx = answer_idx if answer_idx is not None else ANSWER_OPTION_INDEX
     final_headless = headless if headless is not None else HEADLESS
@@ -499,13 +513,13 @@ async def run_batch(
                         pass
 
                 if isinstance(student_info, dict):
-                    username = student_info.get("username", "").strip()
+                    username = normalize_vidya_roll(student_info.get("username", ""))
                     password = student_info.get("password") or VIDYA_PASSWORD
                 elif isinstance(student_info, (list, tuple)):
-                    username = str(student_info[0]).strip()
+                    username = normalize_vidya_roll(str(student_info[0]))
                     password = str(student_info[1]).strip() if len(student_info) > 1 and student_info[1] else VIDYA_PASSWORD
                 else:
-                    username = str(student_info).strip()
+                    username = normalize_vidya_roll(str(student_info))
                     password = VIDYA_PASSWORD
 
                 if not username:
@@ -600,16 +614,26 @@ async def run_batch(
                         if cancelled_mid:
                             break
 
-                        stats["success"] += 1
                         stats["processed"] += 1
-                        logger.info(f"   ✅ {username} ({student_name}): Completed {submitted_count}/{pending_count} feedbacks.")
-                        if progress_callback:
-                            progress_callback("batch_student_done", {
-                                "username": username,
-                                "name": student_name,
-                                "submitted_count": submitted_count,
-                                "stats": dict(stats),
-                            })
+                        if submitted_count > 0:
+                            stats["success"] += 1
+                            logger.info(f"   ✅ {username} ({student_name}): Completed {submitted_count}/{pending_count} feedbacks.")
+                            if progress_callback:
+                                progress_callback("batch_student_done", {
+                                    "username": username,
+                                    "name": student_name,
+                                    "submitted_count": submitted_count,
+                                    "stats": dict(stats),
+                                })
+                        else:
+                            stats["failed"] += 1
+                            logger.error(f"   ❌ {username} ({student_name}): 0/{pending_count} feedbacks submitted.")
+                            if progress_callback:
+                                progress_callback("batch_student_failed", {
+                                    "username": username,
+                                    "error": f"0/{pending_count} submitted",
+                                    "stats": dict(stats),
+                                })
 
                 except Exception as e:
                     stats["failed"] += 1

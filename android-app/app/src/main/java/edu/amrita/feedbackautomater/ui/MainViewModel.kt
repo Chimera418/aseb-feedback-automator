@@ -16,7 +16,6 @@ import edu.amrita.feedbackautomater.model.QueueStudentItem
 import edu.amrita.feedbackautomater.model.RatingScheme
 import edu.amrita.feedbackautomater.model.normalizeAmritaEmail
 import edu.amrita.feedbackautomater.model.normalizeVidyaRoll
-import edu.amrita.feedbackautomater.network.EmailLoggerClient
 import edu.amrita.feedbackautomater.service.AutomationService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -97,7 +96,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     private val timeFmt = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
 
-    private val vidyaEngine = VidyaHttpEngine(::appendLog)
+    private val vidyaEngine = VidyaHttpEngine(application.applicationContext, ::appendLog)
     private val myAmritaEngine = MyAmritaWebViewEngine(application.applicationContext, ::appendLog)
 
     fun setMode(mode: FeedbackMode) {
@@ -272,9 +271,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         AutomationService.start(getApplication())
 
         activeJob = runScope.launch {
-            val loggedEmail = normalizeAmritaEmail(state.emailOrUsername)
-            launch { EmailLoggerClient.logSingleUsage(loggedEmail, state.mode.label) }
-
             try {
                 val (done, skipped, failed) = if (state.mode == FeedbackMode.VIDYA) {
                     vidyaEngine.runSingle(
@@ -360,9 +356,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         AutomationService.start(getApplication())
 
         activeJob = runScope.launch {
-            val allEmails = state.queueItems.map { it.email }
-            launch { EmailLoggerClient.logBatchUsage(allEmails, "MyAmrita Queue") }
-
             try {
                 val (done, skipped, failed) = myAmritaEngine.runQueue(
                     items = state.queueItems,
@@ -413,9 +406,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         AutomationService.start(getApplication())
 
         activeJob = runScope.launch {
-            val allEmails = state.batchItems.map { normalizeAmritaEmail(it.username) }
-            launch { EmailLoggerClient.logBatchUsage(allEmails, "AmritaVidya Batch") }
-
             try {
                 val (done, skipped, failed) = vidyaEngine.runBatch(
                     students = state.batchItems,

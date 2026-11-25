@@ -16,7 +16,7 @@ Run everything directly on your Android phone — no PC, no Playwright, no cloud
 ### ⬇️ Download APK
 Grab the latest signed APK from [**GitHub Releases →**](https://github.com/Chimera418/aseb-feedback-automator/releases/latest)
 
-1. Download `Amrita-Feedback-Automater-v1.1.0.apk` on your Android phone (Android 8.0+).
+1. Download `Amrita-Feedback-Automater-v1.1.1.apk` on your Android phone (Android 8.0+).
 2. Tap the APK to install (enable *"Install unknown apps"* for your browser/file manager if prompted).
 
 ### ✨ Android Features
@@ -126,8 +126,8 @@ On Desktop/CLI, credentials and options can also be set via environment variable
 
 ## 🔒 Privacy & Security
 
-* **No credential storage or transmission**: Passwords, Microsoft SSO cookies, and Outlook OTPs are processed strictly locally on your phone or PC and are never written to disk or sent to any third-party server.
-* **Secrets excluded from Git**: `android-app/local.properties`, `*.jks`, `*.keystore`, and `.env` files are git-ignored so signing keys and optional webhook URLs are never committed.
+* **No credential storage or transmission**: Passwords, Microsoft SSO cookies, and Outlook OTPs are processed strictly locally on your phone or PC and are never written to disk or sent to any third-party server. The Android app has zero telemetry or analytics.
+* **Secrets excluded from Git**: `android-app/local.properties`, `*.jks`, `*.keystore`, and `.env` files are git-ignored so signing keys are never committed.
 
 ## ⚠️ Disclaimer
 

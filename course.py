@@ -179,7 +179,7 @@ async def login_to_microsoft(page: Page, email: str, password: str) -> None:
 
         # 3. Handle "Choose a way to sign in" / Authenticator prompt (if it appears)
         # Incase Microsoft defaults to Authenticator app approval, choose "Use my password"
-        for _ in range(5):
+        for _ in range(6):
             # If password field is already visible, proceed directly
             try:
                 if await page.locator(SEL["login_password"]).is_visible():
@@ -187,32 +187,39 @@ async def login_to_microsoft(page: Page, email: str, password: str) -> None:
             except Exception:
                 pass
 
-            # Check if "Use my password" is visible (e.g. on "Choose a way to sign in" screen)
+            # Check if "Use your password instead" / "Use my password" is visible
             pwd_choice_found = False
             pwd_selectors = [
-                "text='Use my password'",
-                "text='Use your password instead'",
                 "#idA_PWD_SwitchToPassword",
+                "a[id*='SwitchToPassword']",
+                "[data-bind*='SwitchToPassword']",
+                "a:has-text('Use your password instead')",
+                "a:has-text('Use my password')",
+                "text='Use your password instead'",
+                "text='Use my password'",
                 "div[data-value='Password']",
                 "[role='button']:has-text('Use my password')",
                 "div.table-row:has-text('Use my password')",
-                "div:has-text('Use my password')",
                 "button:has-text('Use my password')",
             ]
             for p_sel in pwd_selectors:
                 try:
                     loc = page.locator(p_sel).last
                     if await loc.is_visible():
-                        logger.info("...Detected 'Choose a way to sign in'. Selecting 'Use my password'...")
+                        logger.info("...Detected 'Choose a way to sign in'. Selecting password sign-in...")
                         await loc.click(timeout=4000)
                         pwd_choice_found = True
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(1.5)
                         break
                 except Exception:
                     continue
 
             if pwd_choice_found:
-                break
+                try:
+                    await page.wait_for_selector(SEL["login_password"], timeout=3500)
+                    break
+                except Exception:
+                    continue
 
             # If stuck on Authenticator prompt, look for "Other ways to sign in" / "Sign-in options"
             other_ways_selectors = [

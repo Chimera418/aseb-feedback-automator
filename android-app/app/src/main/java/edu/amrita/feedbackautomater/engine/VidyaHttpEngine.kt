@@ -1,5 +1,6 @@
 package edu.amrita.feedbackautomater.engine
 
+import android.content.Context
 import edu.amrita.feedbackautomater.model.BatchStudentItem
 import edu.amrita.feedbackautomater.model.ItemStatus
 import edu.amrita.feedbackautomater.model.LogLevel
@@ -15,17 +16,22 @@ import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.FormBody
 import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONArray
+import org.json.JSONObject
 import org.jsoup.Jsoup
 import java.net.URI
 import java.util.concurrent.TimeUnit
 
 /**
- * Pure client-side HTTP engine for AmritaVidya.
- * Runs directly on the user's device network with clean per-student session isolation.
+ * Client-side engine for AmritaVidya.
+ * Uses fast native HTTP first (with proper post-redirect URL tracking) and automatically
+ * falls back to headless Android WebView if the portal requires JS onsubmit/onclick execution.
  */
 class VidyaHttpEngine(
+    private val context: Context,
     private val onLog: (String, LogLevel) -> Unit
 ) {
     companion object {
@@ -59,15 +65,20 @@ class VidyaHttpEngine(
         .build()
 
     private fun resolveUrl(baseUrl: String, relativeOrAbsolute: String): String {
+        val encoded = relativeOrAbsolute.trim().replace(" ", "%20")
         return try {
-            URI(baseUrl).resolve(relativeOrAbsolute).toString()
+            URI(baseUrl).resolve(encoded).toString()
         } catch (_: Exception) {
-            baseUrl + relativeOrAbsolute.trimStart('/')
+            baseUrl + encoded.trimStart('/')
         }
     }
 
+    /**
+     * Fetches a URL and returns (finalRedirectedUrl, htmlBody).
+     * Returning resp.request.url ensures relative/empty form actions POST to the real target page.
+     */
     private fun fetchWithFallback(client: OkHttpClient, url: String): Pair<String, String> {
-        var currentUrl = url
+        var currentUrl = url.replace(" ", "%20")
         var lastError: Exception? = null
         for (attempt in 1..3) {
             try {
@@ -77,8 +88,9 @@ class VidyaHttpEngine(
                     .get()
                     .build()
                 client.newCall(req).execute().use { resp ->
+                    val finalUrl = resp.request.url.toString()
                     val body = resp.body?.string().orEmpty()
-                    return currentUrl to body
+                    return finalUrl to body
                 }
             } catch (e: Exception) {
                 lastError = e
@@ -163,31 +175,62 @@ class VidyaHttpEngine(
         return pending
     }
 
-    private fun submitSingleForm(client: OkHttpClient, baseUrl: String, item: PendingSubject, scheme: RatingScheme) {
+    private fun submitSingleFormHttp(client: OkHttpClient, baseUrl: String, item: PendingSubject, scheme: RatingScheme) {
         val formUrl = item.url ?: throw RuntimeException("No form URL found for ${item.code}")
         val (resolvedUrl, html) = fetchWithFallback(client, formUrl)
         val doc = Jsoup.parse(html, resolvedUrl)
-        val form = doc.selectFirst("form") ?: throw RuntimeException("No form found on ${item.code}")
-        val actionUrl = form.absUrl("action").ifBlank { resolvedUrl }
 
-        val formBuilder = FormBody.Builder()
+        // Pick the form that actually contains radio buttons (fallback to first form)
+        val form = doc.select("form").firstOrNull { it.select("input[type=radio]").isNotEmpty() }
+            ?: doc.selectFirst("form")
+            ?: throw RuntimeException("No form found on ${item.code}")
 
-        form.select("input").forEach { input ->
-            val type = input.attr("type").lowercase()
-            val name = input.attr("name")
+        // Collect inputs from form (or full document if legacy malformed HTML split form/table)
+        val scope = if (form.select("input[type=radio]").isNotEmpty()) form else doc
+
+        // Match vidya.py: use the LAST submit button (submit / button / image)
+        val submitBtn = scope.select("input[type=submit], button[type=submit], button:not([type]), input[type=image]").lastOrNull()
+
+        // AmritaVidya sets form action dynamically via submit button onclick="this.form.action='feedback_submit_ver1.php';"
+        val onclickAction = submitBtn?.attr("onclick")?.let { js ->
+            Regex("""action\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
+                .find(js)?.groupValues?.getOrNull(1)?.trim()
+        }
+        val rawAction = onclickAction?.takeIf { it.isNotEmpty() } ?: form.attr("action").trim()
+        val actionUrl = if (rawAction.isNotEmpty()) {
+            resolveUrl(baseUrl, rawAction)
+        } else {
+            resolvedUrl
+        }
+        val method = form.attr("method").trim().lowercase().ifEmpty { "post" }
+
+        val fields = mutableListOf<Pair<String, String>>()
+
+        scope.select("input").forEach { input ->
+            val type = input.attr("type").trim().lowercase()
+            val name = input.attr("name").trim()
             if (name.isBlank()) return@forEach
-            if (type == "hidden" || type == "text") {
-                formBuilder.add(name, input.attr("value"))
+            when (type) {
+                "hidden", "text", "", "number", "email" -> fields.add(name to input.attr("value"))
+                "checkbox" -> if (input.hasAttr("checked")) fields.add(name to input.attr("value").ifBlank { "on" })
             }
         }
-        form.select("textarea").forEach { ta ->
-            val name = ta.attr("name")
-            if (name.isNotBlank()) formBuilder.add(name, "")
+        scope.select("select").forEach { sel ->
+            val name = sel.attr("name").trim()
+            if (name.isBlank()) return@forEach
+            val selectedOpt = sel.selectFirst("option[selected]") ?: sel.selectFirst("option")
+            if (selectedOpt != null) {
+                fields.add(name to selectedOpt.attr("value").ifBlank { selectedOpt.text() })
+            }
+        }
+        scope.select("textarea").forEach { ta ->
+            val name = ta.attr("name").trim()
+            if (name.isNotBlank()) fields.add(name to ta.text())
         }
 
         val radioGroups = linkedMapOf<String, MutableList<String>>()
-        for (radio in form.select("input[type=radio]")) {
-            val name = radio.attr("name")
+        for (radio in scope.select("input[type=radio]")) {
+            val name = radio.attr("name").trim()
             if (name.isBlank()) continue
             radioGroups.getOrPut(name) { mutableListOf() }.add(radio.attr("value"))
         }
@@ -198,20 +241,43 @@ class VidyaHttpEngine(
 
         for ((name, values) in radioGroups) {
             val chosenIdx = scheme.resolveIndex(values.size)
-            formBuilder.add(name, values[chosenIdx])
+            fields.add(name to values[chosenIdx])
         }
 
-        form.selectFirst("input[type=submit], button[type=submit]")?.let { btn ->
-            val name = btn.attr("name")
-            if (name.isNotBlank()) formBuilder.add(name, btn.attr("value").ifBlank { "Submit" })
+        // Include submit button name/value if present
+        if (submitBtn != null) {
+            val btnName = submitBtn.attr("name").trim()
+            val btnType = submitBtn.attr("type").trim().lowercase()
+            if (btnName.isNotBlank()) {
+                if (btnType == "image") {
+                    fields.add("$btnName.x" to "10")
+                    fields.add("$btnName.y" to "10")
+                } else {
+                    fields.add(btnName to submitBtn.attr("value").ifBlank { "Submit" })
+                }
+            }
         }
 
-        val req = Request.Builder()
-            .url(actionUrl)
-            .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
-            .header("Referer", resolvedUrl)
-            .post(formBuilder.build())
-            .build()
+        val req = if (method == "get") {
+            val httpUrlBuilder = (actionUrl.toHttpUrlOrNull()
+                ?: throw RuntimeException("Invalid action URL: $actionUrl")).newBuilder()
+            fields.forEach { (k, v) -> httpUrlBuilder.addQueryParameter(k, v) }
+            Request.Builder()
+                .url(httpUrlBuilder.build())
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+                .header("Referer", resolvedUrl)
+                .get()
+                .build()
+        } else {
+            val formBuilder = FormBody.Builder()
+            fields.forEach { (k, v) -> formBuilder.add(k, v) }
+            Request.Builder()
+                .url(actionUrl)
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+                .header("Referer", resolvedUrl)
+                .post(formBuilder.build())
+                .build()
+        }
 
         client.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful && resp.code !in 300..399) {
@@ -221,7 +287,165 @@ class VidyaHttpEngine(
 
         val remaining = collectPending(client, baseUrl)
         if (remaining.any { it.code == item.code }) {
-            throw RuntimeException("${item.code} still pending after submission")
+            throw RuntimeException("${item.code} still pending after HTTP submission")
+        }
+    }
+
+    /**
+     * Full Chromium WebView fallback for AmritaVidya (mirrors vidya.py Playwright behavior 1:1).
+     * Handles JS onclick/onsubmit validation, alert/confirm dialogs, and quirky legacy PHP forms.
+     */
+    private suspend fun submitRemainingViaWebView(
+        rawUsername: String,
+        password: String,
+        items: List<PendingSubject>,
+        scheme: RatingScheme,
+        onItemStatus: (PendingSubject, ItemStatus) -> Unit = { _, _ -> }
+    ): Pair<Int, Int> {
+        val username = normalizeVidyaRoll(rawUsername)
+        val wv = withContext(Dispatchers.Main) { WebViewController(context) }
+        var submitted = 0
+        var failed = 0
+        try {
+            wv.clearAllCookies()
+            var activeBase = BASE_URL
+            wv.loadUrl(activeBase + "main_login.php")
+            if (!wv.waitForSelector("input[name='n1']", 10_000L)) {
+                activeBase = "http://$FALLBACK_HOST/amritavidya/"
+                wv.loadUrl(activeBase + "main_login.php")
+                if (!wv.waitForSelector("input[name='n1']", 12_000L)) {
+                    throw RuntimeException("AmritaVidya login form did not load in WebView.")
+                }
+            }
+
+            wv.fillInput("input[name='n1']", username)
+            wv.fillInput("input[name='n2']", password)
+            wv.clickSelector("input[type='image'], input[type='submit'], button[type='submit']")
+            delay(2000)
+
+            for (item in items) {
+                onItemStatus(item, ItemStatus.PROCESSING)
+                try {
+                    val targetUrl = item.url?.replace(" ", "%20")
+                    if (targetUrl != null) {
+                        wv.loadUrl(targetUrl)
+                    } else {
+                        wv.loadUrl(activeBase + "feedback_home.php")
+                        val codeJson = JSONObject.quote(item.code)
+                        wv.evalJs(
+                            """
+                            (function() {
+                                const rows = Array.from(document.querySelectorAll('tr'));
+                                for (const r of rows) {
+                                    if ((r.innerText || '').includes($codeJson)) {
+                                        const a = Array.from(r.querySelectorAll('a')).find(el =>
+                                            (el.innerText || '').toLowerCase().includes('enter feedback')
+                                        );
+                                        if (a) { a.click(); return '1'; }
+                                    }
+                                }
+                                return '0';
+                            })()
+                            """.trimIndent()
+                        )
+                        delay(1500)
+                    }
+
+                    if (!wv.waitForSelector("input[type='radio']", 12_000L)) {
+                        throw RuntimeException("No radio questions found for ${item.code}")
+                    }
+
+                    // Discover radio groups in DOM order
+                    val groupsJson = wv.evalJs(
+                        """
+                        (function() {
+                            const counts = {};
+                            const order = [];
+                            for (const r of document.querySelectorAll("input[type='radio']")) {
+                                const n = r.name || '';
+                                if (!(n in counts)) { counts[n] = 0; order.push(n); }
+                                counts[n]++;
+                            }
+                            return JSON.stringify(order.map(n => ({ name: n, count: counts[n] })));
+                        })()
+                        """.trimIndent()
+                    )
+                    val arr = JSONArray(groupsJson.ifBlank { "[]" })
+                    if (arr.length() == 0) throw RuntimeException("No radio groups found for ${item.code}")
+
+                    // Build per-group chosen index map and check each radio
+                    val picks = JSONObject()
+                    for (i in 0 until arr.length()) {
+                        val obj = arr.getJSONObject(i)
+                        val name = obj.getString("name")
+                        val count = obj.getInt("count")
+                        picks.put(name, scheme.resolveIndex(count))
+                    }
+                    wv.evalJs(
+                        """
+                        (function() {
+                            const picks = ${picks.toString()};
+                            for (const [name, idx] of Object.entries(picks)) {
+                                const radios = name
+                                    ? Array.from(document.querySelectorAll("input[type='radio'][name='" + name.replace(/'/g, "\\'") + "']"))
+                                    : Array.from(document.querySelectorAll("input[type='radio']"));
+                                const target = radios[Math.min(idx, radios.length - 1)];
+                                if (target) {
+                                    target.checked = true;
+                                    target.click();
+                                    target.dispatchEvent(new Event('change', { bubbles: true }));
+                                }
+                            }
+                            const btns = Array.from(document.querySelectorAll("input[type='submit'], button[type='submit'], input[type='image']"));
+                            const submit = btns[btns.length - 1];
+                            if (submit) {
+                                submit.click();
+                                return '1';
+                            }
+                            const f = document.querySelector('form');
+                            if (f) { f.submit(); return '1'; }
+                            return '0';
+                        })()
+                        """.trimIndent()
+                    )
+                    delay(1800)
+
+                    // Verify cleared on feedback_home.php
+                    wv.loadUrl(activeBase + "feedback_home.php")
+                    val codeJson = JSONObject.quote(item.code)
+                    val stillPending = wv.evalJs(
+                        """
+                        (function() {
+                            const rows = Array.from(document.querySelectorAll('tr'));
+                            for (const r of rows) {
+                                if ((r.innerText || '').includes($codeJson)) {
+                                    const hasLink = Array.from(r.querySelectorAll('a')).some(a =>
+                                        (a.innerText || '').toLowerCase().includes('enter feedback')
+                                    );
+                                    if (hasLink) return '1';
+                                }
+                            }
+                            return '0';
+                        })()
+                        """.trimIndent()
+                    )
+                    if (stillPending == "1") {
+                        throw RuntimeException("${item.code} still pending after submission")
+                    }
+                    submitted++
+                    onItemStatus(item, ItemStatus.DONE)
+                    onLog("Submitted ${item.code}", LogLevel.SUCCESS)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    failed++
+                    onItemStatus(item, ItemStatus.FAILED)
+                    onLog("Failed ${item.code}: ${e.message}", LogLevel.ERROR)
+                }
+            }
+            return submitted to failed
+        } finally {
+            wv.destroy()
         }
     }
 
@@ -234,7 +458,7 @@ class VidyaHttpEngine(
         onSubjectStatus: (String, ItemStatus) -> Unit = { _, _ -> }
     ): Triple<Int, Int, Int> = withContext(Dispatchers.IO) {
         val client = newClient()
-        onLog("Logging in to AmritaVidya as $username...", LogLevel.INFO)
+        onLog("Logging in to AmritaVidya as ${normalizeVidyaRoll(username)}...", LogLevel.INFO)
         val (activeBase, studentName) = login(client, username, password)
         onStudentName(studentName)
         onLog("Signed in as $studentName", LogLevel.SUCCESS)
@@ -250,21 +474,39 @@ class VidyaHttpEngine(
 
         var done = 0
         var failed = 0
+        var fallbackNeededFromIdx = -1
+
         for ((idx, item) in pending.withIndex()) {
             if (!isActive) throw CancellationException()
             onSubjectStatus(item.info, ItemStatus.PROCESSING)
             onLog("[${idx + 1}/${pending.size}] Submitting ${item.info}...", LogLevel.INFO)
             try {
-                submitSingleForm(client, activeBase, item, ratingScheme)
+                submitSingleFormHttp(client, activeBase, item, ratingScheme)
                 onSubjectStatus(item.info, ItemStatus.DONE)
                 onLog("Submitted ${item.code}", LogLevel.SUCCESS)
                 done++
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                onSubjectStatus(item.info, ItemStatus.FAILED)
-                onLog("Failed ${item.code}: ${e.message}", LogLevel.ERROR)
-                failed++
+                onLog("HTTP submit did not clear ${item.code}; switching to browser mode...", LogLevel.WARN)
+                fallbackNeededFromIdx = idx
+                break
             }
         }
+
+        if (fallbackNeededFromIdx >= 0) {
+            val remaining = pending.drop(fallbackNeededFromIdx)
+            val (wvDone, wvFailed) = submitRemainingViaWebView(
+                rawUsername = username,
+                password = password,
+                items = remaining,
+                scheme = ratingScheme,
+                onItemStatus = { item, status -> onSubjectStatus(item.info, status) }
+            )
+            done += wvDone
+            failed += wvFailed
+        }
+
         onLog("AmritaVidya automation complete!", LogLevel.SUCCESS)
         Triple(done, 0, failed)
     }
@@ -280,6 +522,7 @@ class VidyaHttpEngine(
         var doneCount = 0
         var skippedCount = 0
         var failedCount = 0
+        var preferWebViewForSubmit = false
 
         for ((idx, student) in students.withIndex()) {
             if (!isActive) {
@@ -308,29 +551,73 @@ class VidyaHttpEngine(
                     onLog("[${idx + 1}/${students.size}] ${student.username} ($name): Already done.", LogLevel.INFO)
                 } else {
                     var submitted = 0
-                    for ((sIdx, item) in pending.withIndex()) {
-                        if (!isActive) throw CancellationException()
+                    var fallbackFromIdx = if (preferWebViewForSubmit) 0 else -1
+
+                    if (!preferWebViewForSubmit) {
+                        for ((sIdx, item) in pending.withIndex()) {
+                            if (!isActive) throw CancellationException()
+                            onUpdateStudent(student.id) {
+                                it.copy(
+                                    pendingCount = pending.size,
+                                    statusText = "Submitting ${sIdx + 1}/${pending.size}"
+                                )
+                            }
+                            try {
+                                submitSingleFormHttp(client, activeBase, item, ratingScheme)
+                                submitted++
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (_: Exception) {
+                                onLog("${student.username}: switching to browser submit for remaining ${pending.size - sIdx} form(s)...", LogLevel.WARN)
+                                preferWebViewForSubmit = true
+                                fallbackFromIdx = sIdx
+                                break
+                            }
+                        }
+                    }
+
+                    if (fallbackFromIdx >= 0) {
+                        val remaining = pending.drop(fallbackFromIdx)
+                        var currentIdx = fallbackFromIdx
+                        val (wvDone, _) = submitRemainingViaWebView(
+                            rawUsername = student.username,
+                            password = student.password,
+                            items = remaining,
+                            scheme = ratingScheme,
+                            onItemStatus = { _, st ->
+                                if (st == ItemStatus.PROCESSING) {
+                                    currentIdx++
+                                    onUpdateStudent(student.id) {
+                                        it.copy(
+                                            pendingCount = pending.size,
+                                            statusText = "Submitting $currentIdx/${pending.size}"
+                                        )
+                                    }
+                                }
+                            }
+                        )
+                        submitted += wvDone
+                    }
+
+                    if (submitted > 0) {
+                        doneCount++
                         onUpdateStudent(student.id) {
                             it.copy(
-                                pendingCount = pending.size,
-                                statusText = "Submitting ${sIdx + 1}/${pending.size}"
+                                status = ItemStatus.DONE,
+                                statusText = "Done ($submitted/${pending.size})"
                             )
                         }
-                        try {
-                            submitSingleForm(client, activeBase, item, ratingScheme)
-                            submitted++
-                        } catch (e: Exception) {
-                            onLog("${student.username} / ${item.code}: ${e.message}", LogLevel.WARN)
+                        onLog("[${idx + 1}/${students.size}] ${student.username} ($name): $submitted/${pending.size} submitted.", LogLevel.SUCCESS)
+                    } else {
+                        failedCount++
+                        onUpdateStudent(student.id) {
+                            it.copy(
+                                status = ItemStatus.FAILED,
+                                statusText = "Failed (0/${pending.size})"
+                            )
                         }
+                        onLog("[${idx + 1}/${students.size}] ${student.username} ($name): 0/${pending.size} submitted.", LogLevel.ERROR)
                     }
-                    doneCount++
-                    onUpdateStudent(student.id) {
-                        it.copy(
-                            status = ItemStatus.DONE,
-                            statusText = "Done ($submitted/${pending.size})"
-                        )
-                    }
-                    onLog("[${idx + 1}/${students.size}] ${student.username} ($name): $submitted/${pending.size} submitted.", LogLevel.SUCCESS)
                 }
             } catch (e: CancellationException) {
                 throw e

@@ -21,9 +21,6 @@ All values below are optional and stay strictly local in `android-app/local.prop
 # Android SDK location (auto-filled by Android Studio)
 sdk.dir=/path/to/Android/Sdk
 
-# Optional: Discord webhook for email-only usage telemetry (never sends passwords)
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/YOUR_ID/YOUR_TOKEN
-
 # Optional: Release keystore for signed release builds (gradle assembleRelease)
 RELEASE_STORE_FILE=release-keystore.jks
 RELEASE_STORE_PASSWORD=your_store_password

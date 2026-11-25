@@ -22,12 +22,8 @@ android {
         applicationId = "edu.amrita.feedbackautomater"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1.0"
-
-        // Configure in android-app/local.properties (kept out of Git):
-        // DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
-        buildConfigField("String", "DISCORD_WEBHOOK_URL", "\"${prop("DISCORD_WEBHOOK_URL")}\"")
+        versionCode = 3
+        versionName = "1.1.1"
     }
 
     signingConfigs {

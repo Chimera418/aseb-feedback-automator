@@ -46,9 +46,9 @@ fun SettingsScreen(isRunning: Boolean, onClearSaved: () -> Unit, modifier: Modif
             colors = transparent
         )
         ListItem(
-            headlineContent = { Text("What is reported") },
+            headlineContent = { Text("Zero tracking") },
             supportingContent = {
-                Text("When a run starts, the email or roll number, the feedback type and the time are reported so usage can be counted. Nothing else.")
+                Text("This app only talks directly to Amrita's portals and Microsoft Outlook. Nothing is sent to any third-party server.")
             },
             colors = transparent
         )
